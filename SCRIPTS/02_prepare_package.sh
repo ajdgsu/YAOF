@@ -7,6 +7,8 @@ sed -i 's/Os/O2/g' include/target.mk
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+#faster squashfs
+sed -i 's,-nopad -noappend -root-owned,-nopad -noappend -root-owned -comp xz -Xe -Xbcj arm -Xpreset 0 -Xstrategy default\,filtered\,huffman_only\,run_length_encoded\,fixed,g' include/image-commands.mk
 # 移除 SNAPSHOT 标签
 sed -i 's,-SNAPSHOT,,g' include/version.mk
 sed -i 's,-SNAPSHOT,,g' package/base-files/image-config.in
