@@ -46,6 +46,8 @@ sbwfw876_repo="https://github.com/sbwml/openwrt_helloworld"
 sbw_pkg_repo="https://github.com/sbwml/openwrt_pkgs"
 natmap_repo="https://github.com/blueberry-pie-11/luci-app-natmap"
 xwrt_repo="https://github.com/QiuSimons/openwrt-natflow"
+qosmate="https://github.com/hudra0/qosmate.git"
+luci_app_qosmate="https://github.com/hudra0/luci-app-qosmate.git"
 
 # 开始克隆仓库，并行执行
 clone_repo $openwrt_repo $latest_release openwrt &
@@ -60,6 +62,10 @@ clone_repo $openwrt_pkg_repo master openwrt_pkg_ma &
 clone_repo $openwrt_add_repo master OpenWrt-Add &
 clone_repo $dockerman_repo master dockerman &
 clone_repo $docker_lib_repo master docker_lib &
+
+clone_repo $qosmate main qosmate &
+clone_repo $luci_app_qosmate main luci_app_qosmate &
+
 # 等待所有后台任务完成
 wait
 
