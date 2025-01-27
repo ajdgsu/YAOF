@@ -1,0 +1,35 @@
+diff --git a/config/Config-kernel.in b/config/Config-kernel.in
+index 64c8c63..fbde7e6 100644
+--- a/config/Config-kernel.in
++++ b/config/Config-kernel.in
+@@ -1488,3 +1488,30 @@ config KERNEL_WERROR
+ 	  and unusual warnings, or you have some architecture with problems,
+ 	  you may need to disable this config option in order to
+ 	  successfully build the kernel.
++
++config LRU_GEN
++       bool "Multi-Gen LRU"
++       
++       
++       help
++         A high performance LRU implementation to overcommit memory. See
++         Documentation/admin-guide/mm/multigen_lru.rst for details.
++
++config LRU_GEN_ENABLED
++       bool "Enable by default"
++       depends on LRU_GEN
++       help
++         This option enables the multi-gen LRU by default.
++
++config LRU_GEN_STATS
++       bool "Full stats for debugging"
++       depends on LRU_GEN
++       help
++         Do not enable this option unless you plan to look at historical stats
++         from evicted generations for debugging purpose.
++
++         This option has a per-memcg and per-node memory overhead.
++
++config LRU_GEN_WALKS_MMU
++       def_bool y
++       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG

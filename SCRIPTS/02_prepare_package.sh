@@ -86,6 +86,7 @@ cp -f ../PATCH/pkgs/firewall/nftables/*.patch ./package/network/utils/nftables/p
 # Patch LuCI 以增添 FullCone 开关
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0001-luci-app-firewall-add-nft-fullcone-and-bcm-fullcone-.patch
+patch -p1 <../../../PATCH/kernel/0900-kernel-add-mglru.patch
 popd
 
 ### Shortcut-FE 部分 ###
