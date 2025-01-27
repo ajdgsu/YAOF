@@ -86,7 +86,6 @@ cp -f ../PATCH/pkgs/firewall/nftables/*.patch ./package/network/utils/nftables/p
 # Patch LuCI 以增添 FullCone 开关
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0001-luci-app-firewall-add-nft-fullcone-and-bcm-fullcone-.patch
-patch -p1 <../../../PATCH/kernel/0900-kernel-add-mglru.patch
 popd
 
 ### Shortcut-FE 部分 ###
@@ -228,5 +227,7 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 # 生成默认配置及缓存
 rm -rf .config
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
+
+echo -e "\nconfig LRU_GEN\n       bool "Multi-Gen LRU"\n       \n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool "Enable by default"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool "Full stats for debugging"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
 
 #exit 0
