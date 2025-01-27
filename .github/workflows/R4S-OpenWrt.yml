@@ -43,9 +43,12 @@ jobs:
         pip3 install --user -U pylibfdt --break-system-packages
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        wget -q https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/clang/clang-19.1.7.tar.xz
-        sudo tar --strip-components=1 -C /opt/clang -xf clang-19.1.7.tar.xz
-        rm -rf clang-19.1.7.tar.xz
+        #wget -q https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/clang/clang-19.1.7.tar.xz
+        #sudo tar --strip-components=1 -C /opt/clang -xf clang-19.1.7.tar.xz
+        #rm -rf clang-19.1.7.tar.xz
+        wget -q https://github.com/sbwml/openwrt-llvm-toolchain/releases/download/19.0.1/clang-19.0.1-x86_64-unknown-linux-gnu.tar.xz
+        sudo tar --strip-components=1 -C /opt/clang -xf clang-19.0.1-x86_64-unknown-linux-gnu.tar.xz
+        rm -rf clang-19.0.1-x86_64-unknown-linux-gnu.tar.xz
         clang --version
         sudo -E git config --global user.name 'GitHub Actions' && git config --global user.email 'noreply@github.com'
         sudo -E git config --global core.abbrev auto
