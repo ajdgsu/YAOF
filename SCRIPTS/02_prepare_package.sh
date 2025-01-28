@@ -197,6 +197,9 @@ sed -i '/boot()/,+2d' feeds/packages/net/ddns-scripts/files/etc/init.d/ddns
 rm -rf ./feeds/luci/applications/luci-app-dockerman
 cp -rf ../dockerman/applications/luci-app-dockerman ./feeds/luci/applications/luci-app-dockerman
 sed -i '/auto_start/d' feeds/luci/applications/luci-app-dockerman/root/etc/uci-defaults/luci-app-dockerman
+#qosmate
+cp -rf ../luci_app_qosmate ./feeds/luci/applications
+cp -rf ../qosmate ./feeds/packages
 pushd feeds/packages
 wget -qO- https://github.com/openwrt/packages/commit/e2e5ee69.patch | patch -p1
 wget -qO- https://github.com/openwrt/packages/pull/20054.patch | patch -p1
