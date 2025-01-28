@@ -87,7 +87,7 @@ cp -f ../PATCH/pkgs/firewall/nftables/*.patch ./package/network/utils/nftables/p
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0001-luci-app-firewall-add-nft-fullcone-and-bcm-fullcone-.patch
 popd
-patch -p1 <../PATCH/kernel/cloudflare-zlib.patch
+#patch -p1 <../PATCH/kernel/cloudflare-zlib.patch
 
 ### Shortcut-FE 部分 ###
 # Patch Kernel 以支持 Shortcut-FE
