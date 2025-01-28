@@ -64,7 +64,7 @@ clone_repo $dockerman_repo master dockerman &
 clone_repo $docker_lib_repo master docker_lib &
 
 clone_repo $qosmate main qosmate &
-clone_repo $luci_app_qosmate main luci_app_qosmate &
+clone_repo $luci_app_qosmate main luci-app-qosmate &
 
 # 等待所有后台任务完成
 wait

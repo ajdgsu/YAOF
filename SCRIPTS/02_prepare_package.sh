@@ -198,8 +198,8 @@ rm -rf ./feeds/luci/applications/luci-app-dockerman
 cp -rf ../dockerman/applications/luci-app-dockerman ./feeds/luci/applications/luci-app-dockerman
 sed -i '/auto_start/d' feeds/luci/applications/luci-app-dockerman/root/etc/uci-defaults/luci-app-dockerman
 #qosmate
-cp -rf ../luci_app_qosmate ./feeds/luci/applications
-cp -rf ../qosmate ./feeds/packages
+cp -rf ../luci-app-qosmate ./package/new
+cp -rf ../qosmate ./package/new
 pushd feeds/packages
 wget -qO- https://github.com/openwrt/packages/commit/e2e5ee69.patch | patch -p1
 wget -qO- https://github.com/openwrt/packages/pull/20054.patch | patch -p1
@@ -232,6 +232,6 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 rm -rf .config
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
 
-echo -e "\nconfig LRU_GEN\n       bool \"Multi-Gen LRU\"\n       select EMMC_SUPPORT\n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool \"Enable by default\"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool \"Full stats for debugging\"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
+echo -e "\nconfig LRU_GEN\n       bool \"Multi-Gen LRU\"\n       \n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool \"Enable by default\"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool \"Full stats for debugging\"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
 
 #exit 0
