@@ -9,7 +9,7 @@ index 64c8c63..fbde7e6 100644
 +
 +config LRU_GEN
 +       bool "Multi-Gen LRU"
-+       
++       select EMMC_SUPPORT
 +       
 +       help
 +         A high performance LRU implementation to overcommit memory. See
