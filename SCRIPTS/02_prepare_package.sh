@@ -200,6 +200,11 @@ sed -i '/auto_start/d' feeds/luci/applications/luci-app-dockerman/root/etc/uci-d
 #qosmate
 cp -rf ../luci-app-qosmate ./package/new
 cp -rf ../qosmate ./package/new
+#nginx
+rm -f feeds/packages/net/nginx-util/files/nginx.config
+cp -f ../PATCH/nginx/nginx.config feeds/packages/net/nginx-util/files
+rm -f feeds/packages/net/nginx-util/files/uci.conf.template
+cp -f ../PATCH/nginx/uci.conf.template feeds/packages/net/nginx-util/files
 pushd feeds/packages
 wget -qO- https://github.com/openwrt/packages/commit/e2e5ee69.patch | patch -p1
 wget -qO- https://github.com/openwrt/packages/pull/20054.patch | patch -p1
