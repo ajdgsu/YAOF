@@ -110,7 +110,7 @@ jobs:
       run: |
         #echo | make kernel_oldconfig -j$(($(nproc) + 1)) 
         make -j$(($(nproc) + 1)) package/network/utils/nftables/refresh V=s
-        IGNORE_ERRORS=1 make -j$(($(nproc) + 4))
+        IGNORE_ERRORS=1 make -j$(($(nproc) * 2))
         echo $?
     - name: If Error
       working-directory: ${{ github.workspace }}/openwrt
