@@ -1,0 +1,15 @@
+diff --git a/package/base-files/files/lib/preinit/80_mount_root b/package/base-files/files/lib/preinit/80_mount_root
+old mode 100644
+new mode 100755
+index 940c56c..aca0780
+--- a/package/base-files/files/lib/preinit/80_mount_root
++++ b/package/base-files/files/lib/preinit/80_mount_root
+@@ -30,6 +30,8 @@ compose_rootfs_mount_options() {
+ 		fi
+ 	done
+ 
++	append mount_options "background_gc=on gc_merge flush_merge extent_cache data_flush checkpoint_merge compress_algorithm=lz4 compress_extension=* compress_chksum compress_cache atgc age_extent_cache fsync_mode=strict"
++
+ 	echo $mount_options
+ }
+ 

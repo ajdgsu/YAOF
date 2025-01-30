@@ -1,0 +1,19 @@
+diff --git a/package/kernel/linux/modules/fs.mk b/package/kernel/linux/modules/fs.mk
+old mode 100644
+new mode 100755
+index 1fbab8f..7de66d7
+--- a/package/kernel/linux/modules/fs.mk
++++ b/package/kernel/linux/modules/fs.mk
+@@ -616,7 +616,11 @@ define KernelPackage/fs-squashfs
+   SUBMENU:=$(FS_MENU)
+   TITLE:=SquashFS 4.0 filesystem support
+   KCONFIG:=CONFIG_SQUASHFS \
+-	CONFIG_SQUASHFS_XZ=y
++	CONFIG_SQUASHFS_LZ4=y \
++	CONFIG_SQUASHFS_EMBEDDED=y
++	CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=5 \
++
++
+   FILES:=$(LINUX_DIR)/fs/squashfs/squashfs.ko
+   AUTOLOAD:=$(call AutoLoad,30,squashfs,1)
+ endef
