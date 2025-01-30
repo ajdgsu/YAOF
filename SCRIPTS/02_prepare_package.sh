@@ -242,9 +242,8 @@ sed -i 's,# CONFIG_SQUASHFS_4K_DEVBLK_SIZE is not set,CONFIG_SQUASHFS_4K_DEVBLK_
 sed -i 's,# CONFIG_SQUASHFS_LZ4 is not set,CONFIG_SQUASHFS_LZ4=y,g' target/linux/generic/config-6.6
 sed -i 's,# CONFIG_SQUASHFS_EMBEDDED is not set,CONFIG_SQUASHFS_EMBEDDED=y,g' target/linux/generic/config-6.6
 sed -i 's,CONFIG_SQUASHFS_XZ=y,# CONFIG_SQUASHFS_XZ is not set,g' target/linux/generic/config-6.6
-sed -i 's, , ,g' target/linux/generic/config-6.6
-sed -i 's, , ,g' target/linux/generic/config-6.6
 echo "CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=5" >> target/linux/generic/config-6.6
+sed -i 's,CONFIG_CMDLINE="",CONFIG_CMDLINE="rootfs_mount_options.background_gc=on rootfs_mount_options.gc_merge rootfs_mount_options.flush_merge rootfs_mount_options.extent_cache rootfs_mount_options.data_flush rootfs_mount_options.checkpoint_merge rootfs_mount_options.compress_algorithm=lz4 rootfs_mount_options.compress_extension=* rootfs_mount_options.compress_chksum rootfs_mount_options.compress_cache rootfs_mount_options.atgc rootfs_mount_options.age_extent_cache rootfs_mount_options.lazytime rootfs_mount_options.nofail rootfs_mount_options.fsync_mode=strict",g' target/linux/generic/config-6.6
 sed -i 's,SQUASHFSCOMP := gzip,SQUASHFSCOMP := lz4 -Xhc 9,g' include/image.mk
 
 echo -e "\nconfig LRU_GEN\n       bool \"Multi-Gen LRU\"\n       \n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool \"Enable by default\"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool \"Full stats for debugging\"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
