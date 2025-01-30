@@ -4,11 +4,12 @@ clear
 ### 基础部分 ###
 # 使用 O2 级别的优化
 sed -i 's/Os/O2/g' include/target.mk
+sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 #faster squashfs
-sed -i 's,-nopad -noappend -root-owned,-nopad -noappend -root-owned -comp xz -Xe -Xbcj arm -Xpreset 0 -Xstrategy default\,filtered\,huffman_only\,run_length_encoded\,fixed,g' include/image-commands.mk
+#sed -i 's,-nopad -noappend -root-owned,-nopad -noappend -root-owned -comp xz -Xe -Xbcj arm -Xpreset 0 -Xstrategy default\,filtered\,huffman_only\,run_length_encoded\,fixed,g' include/image-commands.mk
 # 移除 SNAPSHOT 标签
 sed -i 's,-SNAPSHOT,,g' include/version.mk
 sed -i 's,-SNAPSHOT,,g' package/base-files/image-config.in
@@ -234,8 +235,17 @@ echo > ./feeds/packages/utils/watchcat/files/watchcat.config
 mkdir -p package/base-files/files/usr/bin
 cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 # 生成默认配置及缓存
+#sed -i 's, , ,g' target/linux/generic/config-6.6
 rm -rf .config
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
+sed -i 's,# CONFIG_SQUASHFS_4K_DEVBLK_SIZE is not set,CONFIG_SQUASHFS_4K_DEVBLK_SIZE=y,g' target/linux/generic/config-6.6
+sed -i 's,# CONFIG_SQUASHFS_LZ4 is not set,CONFIG_SQUASHFS_LZ4=y,g' target/linux/generic/config-6.6
+sed -i 's,# CONFIG_SQUASHFS_EMBEDDED is not set,CONFIG_SQUASHFS_EMBEDDED=y,g' target/linux/generic/config-6.6
+sed -i 's,CONFIG_SQUASHFS_XZ=y,# CONFIG_SQUASHFS_XZ is not set,g' target/linux/generic/config-6.6
+sed -i 's, , ,g' target/linux/generic/config-6.6
+sed -i 's, , ,g' target/linux/generic/config-6.6
+echo "CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=5" >> target/linux/generic/config-6.6
+sed -i 's,SQUASHFSCOMP := gzip,SQUASHFSCOMP := lz4 -Xhc 9,g' include/image.mk
 
 echo -e "\nconfig LRU_GEN\n       bool \"Multi-Gen LRU\"\n       \n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool \"Enable by default\"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool \"Full stats for debugging\"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
 echo "CONFIG_F2FS_FS_COMPRESSION=y" >> target/linux/rockchip/armv8/config-6.6
