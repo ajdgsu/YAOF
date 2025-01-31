@@ -253,9 +253,8 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
     git clone https://github.com/sbwml/kmod_packages_net_coova-chilli feeds/packages/net/coova-chilli
 ###clang
 rm -rf .config
-patch -p1 < ../PATCH/kernel/test/0005-kernel-Add-support-for-llvm-clang-compiler.patch
-patch -p1 < ../PATCH/kernel/test/100-macremapper-fix-clang-build.patch
-patch -p1 < ../PATCH/kernel/test/0008-meson-add-platform-variable-to-cross-compilation-fil.patch
+patch -p1 < ../PATCH/kernel/clang/0005-kernel-Add-support-for-llvm-clang-compiler.patch
+patch -p1 < ../PATCH/kernel/clang/0008-meson-add-platform-variable-to-cross-compilation-fil.patch
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
 sed -i 's,CONFIG_LTO_NONE=y,CONFIG_LTO_CLANG_FULL=y,g' target/linux/generic/config-6.6
 sed -i 's,# CONFIG_SQUASHFS_4K_DEVBLK_SIZE is not set,CONFIG_SQUASHFS_4K_DEVBLK_SIZE=y,g' target/linux/generic/config-6.6
