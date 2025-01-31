@@ -89,7 +89,7 @@ cp -f ../PATCH/pkgs/firewall/nftables/*.patch ./package/network/utils/nftables/p
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0001-luci-app-firewall-add-nft-fullcone-and-bcm-fullcone-.patch
 popd
-patch -p1 <../PATCH/kernel/overlay_fixed_f2fs_options.patch
+#patch -p1 <../PATCH/kernel/overlay_fixed_f2fs_options.patch
 
 ### Shortcut-FE 部分 ###
 # Patch Kernel 以支持 Shortcut-FE
@@ -245,7 +245,7 @@ sed -i 's,# CONFIG_SQUASHFS_EMBEDDED is not set,CONFIG_SQUASHFS_EMBEDDED=y,g' ta
 sed -i 's,CONFIG_SQUASHFS_XZ=y,# CONFIG_SQUASHFS_XZ is not set,g' target/linux/generic/config-6.6
 sed -i 's,CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3,CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=5,g' target/linux/generic/config-6.6
 echo "CONFIG_IOSCHED_BFQ=y" >> target/linux/generic/config-6.6
-#sed -i 's,CONFIG_CMDLINE="",CONFIG_CMDLINE="rootfs_mount_options.background_gc=on rootfs_mount_options.gc_merge rootfs_mount_options.flush_merge rootfs_mount_options.extent_cache rootfs_mount_options.data_flush rootfs_mount_options.checkpoint_merge rootfs_mount_options.compress_algorithm=lz4 rootfs_mount_options.compress_extension=* rootfs_mount_options.compress_chksum rootfs_mount_options.compress_cache rootfs_mount_options.atgc rootfs_mount_options.age_extent_cache rootfs_mount_options.lazytime rootfs_mount_options.nofail rootfs_mount_options.fsync_mode=strict",g' target/linux/generic/config-6.6
+sed -i 's,CONFIG_CMDLINE="",CONFIG_CMDLINE="rootfs_mount_options.background_gc=on rootfs_mount_options.gc_merge rootfs_mount_options.flush_merge rootfs_mount_options.extent_cache rootfs_mount_options.data_flush rootfs_mount_options.checkpoint_merge rootfs_mount_options.compress_algorithm=lz4 rootfs_mount_options.compress_extension=* rootfs_mount_options.compress_chksum rootfs_mount_options.compress_cache rootfs_mount_options.atgc rootfs_mount_options.age_extent_cache rootfs_mount_options.lazytime rootfs_mount_options.nofail rootfs_mount_options.fsync_mode=strict",g' target/linux/generic/config-6.6
 sed -i 's,SQUASHFSCOMP := gzip,SQUASHFSCOMP := lz4 -Xhc,g' include/image.mk
 sed -i 's,xz $(LZMA_XZ_OPTIONS) $(BCJ_FILTER),lz4 -Xhc,g' include/image.mk
 
