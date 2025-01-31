@@ -3,7 +3,7 @@ clear
 
 ### 基础部分 ###
 # 使用 O2 级别的优化
-sed -i 's/Os/O2/g' include/target.mk
+sed -i 's/Os/O3/g' include/target.mk
 sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
 # 更新 Feeds
 ./scripts/feeds update -a
