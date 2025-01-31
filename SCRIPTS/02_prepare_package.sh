@@ -247,7 +247,7 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
     rm -rf feeds/packages/libs/dmx_usb_module
     git clone https://git.cooluc.com/sbwml/feeds_packages_libs_dmx_usb_module feeds/packages/libs/dmx_usb_module
     # macremapper
-    patch -p1 ../PATCH/kernel/clang/100-macremapper-fix-clang-build.patch 
+    patch -Np1 ../PATCH/kernel/clang/100-macremapper-fix-clang-build.patch 
     # coova-chilli module
     rm -rf feeds/packages/net/coova-chilli
     git clone https://github.com/sbwml/kmod_packages_net_coova-chilli feeds/packages/net/coova-chilli
