@@ -89,7 +89,6 @@ cp -f ../PATCH/pkgs/firewall/nftables/*.patch ./package/network/utils/nftables/p
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0001-luci-app-firewall-add-nft-fullcone-and-bcm-fullcone-.patch
 popd
-patch -p1 <../PATCH/kernel/squashfs-lz4.patch
 patch -p1 <../PATCH/kernel/overlay_fixed_f2fs_options.patch
 
 ### Shortcut-FE 部分 ###
