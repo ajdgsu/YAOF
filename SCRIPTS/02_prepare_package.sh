@@ -7,6 +7,8 @@ sed -i 's/Os/O3/g' include/target.mk
 sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
 rm -rf package/new/openwrt-r8168
 git clone https://github.com/sbwml/package_kernel_r8126 package/new/openwrt-r8168
+rm -rf package/network/utils/linux-atm
+git clone https://github.com/sbwml/package_network_utils_linux-atm package/network/utils/linux-atm
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
