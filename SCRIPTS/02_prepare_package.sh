@@ -9,6 +9,11 @@ rm -rf package/new/openwrt-r8168
 git clone https://github.com/sbwml/package_kernel_r8126 package/new/openwrt-r8168
 rm -rf package/network/utils/linux-atm
 git clone https://github.com/sbwml/package_network_utils_linux-atm package/network/utils/linux-atm
+cp -rf ../PATCH/pkgs/jool/Makefile feeds/packages/net/jool/Makefile
+rm -rf package/boot/rkbin package/boot/uboot-rockchip package/boot/arm-trusted-firmware-rockchip
+git clone https://$github/sbwml/package_boot_uboot-rockchip package/boot/uboot-rockchip -b v2023.04
+    git clone https://$github/sbwml/arm-trusted-firmware-rockchip package/boot/arm-trusted-firmware-rockchip -b 0419
+
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
