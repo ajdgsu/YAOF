@@ -238,6 +238,10 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 # 生成默认配置及缓存
 #sed -i 's, , ,g' target/linux/generic/config-6.6
 rm -rf .config
+patch -p1 < ../PATCH/kernel/test/0005-kernel-Add-support-for-llvm-clang-compiler.patch
+patch -p1 < ../PATCH/kernel/test/900-fix-build-with-clang.patch
+patch -p1 < ../PATCH/kernel/test/100-macremapper-fix-clang-build.patch
+patch -p1 < ../PATCH/kernel/test/0008-meson-add-platform-variable-to-cross-compilation-fil.patch
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
 sed -i 's,# CONFIG_SQUASHFS_4K_DEVBLK_SIZE is not set,CONFIG_SQUASHFS_4K_DEVBLK_SIZE=y,g' target/linux/generic/config-6.6
 sed -i 's,# CONFIG_SQUASHFS_LZ4 is not set,CONFIG_SQUASHFS_LZ4=y,g' target/linux/generic/config-6.6
