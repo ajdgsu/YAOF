@@ -47,9 +47,6 @@ jobs:
         wget -q https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/calngv2/clang-19.1.7.tar.xz
         sudo tar --strip-components=1 -C /opt/clang -xf clang-19.1.7.tar.xz
         rm -rf clang-19.1.7.tar.xz
-        wget -q https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/calngv2/clang-19.1.7.tar.xz
-        sudo tar --strip-components=1 -C /opt/clang -xf clang-19.1.7.tar.xz
-        rm -rf clang-19.1.7.tar.xz
         clang --version
         sudo -E git config --global user.name 'GitHub Actions' && git config --global user.email 'noreply@github.com'
         sudo -E git config --global core.abbrev auto
