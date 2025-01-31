@@ -237,9 +237,23 @@ mkdir -p package/base-files/files/usr/bin
 cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 # 生成默认配置及缓存
 #sed -i 's, , ,g' target/linux/generic/config-6.6
+###clang
+    rm -rf feeds/packages/net/xtables-addons
+    git clone https://github.com/sbwml/kmod_packages_net_xtables-addons feeds/packages/net/xtables-addons
+    # netatop
+    sed -i 's/$(MAKE)/$(KERNEL_MAKE)/g' feeds/packages/admin/netatop/Makefile
+    cp -f ../PATCH/kernel/clang/900-fix-build-with-clang.patch feeds/packages/admin/netatop/patches/900-fix-build-with-clang.patch
+    # dmx_usb_module
+    rm -rf feeds/packages/libs/dmx_usb_module
+    git clone https://git.cooluc.com/sbwml/feeds_packages_libs_dmx_usb_module feeds/packages/libs/dmx_usb_module
+    # macremapper
+    patch -p1 ../PATCH/kernel/clang/100-macremapper-fix-clang-build.patch 
+    # coova-chilli module
+    rm -rf feeds/packages/net/coova-chilli
+    git clone https://github.com/sbwml/kmod_packages_net_coova-chilli feeds/packages/net/coova-chilli
+###clang
 rm -rf .config
 patch -p1 < ../PATCH/kernel/test/0005-kernel-Add-support-for-llvm-clang-compiler.patch
-cp -f ../PATCH/kernel/test/900-fix-build-with-clang.patch ./target/linux/generic/backport-6.6/
 patch -p1 < ../PATCH/kernel/test/100-macremapper-fix-clang-build.patch
 patch -p1 < ../PATCH/kernel/test/0008-meson-add-platform-variable-to-cross-compilation-fil.patch
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
