@@ -260,6 +260,8 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
     # coova-chilli module
     rm -rf feeds/packages/net/coova-chilli
     git clone https://github.com/sbwml/kmod_packages_net_coova-chilli feeds/packages/net/coova-chilli
+    
+    patch -p1 < ../PATCH/pkgs/macremapper/100-macremapper-fix-clang-build.patch
 ###clang
 rm -rf .config
 patch -p1 < ../PATCH/kernel/clang/0005-kernel-Add-support-for-llvm-clang-compiler.patch
