@@ -45,7 +45,7 @@ lucidaednext_repo="https://github.com/QiuSimons/luci-app-daed-next"
 sbwfw876_repo="https://github.com/sbwml/openwrt_helloworld"
 sbw_pkg_repo="https://github.com/sbwml/openwrt_pkgs"
 natmap_repo="https://github.com/blueberry-pie-11/luci-app-natmap"
-xwrt_repo="https://github.com/QiuSimons/openwrt-natflow"
+xwrt_repo="https://github.com/sbwml/package_new_natflow package/new/natflow"
 qosmate="https://github.com/hudra0/qosmate.git"
 luci_app_qosmate="https://github.com/hudra0/luci-app-qosmate.git"
 
