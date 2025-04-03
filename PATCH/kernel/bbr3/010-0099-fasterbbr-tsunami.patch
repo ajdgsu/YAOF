@@ -1,0 +1,121 @@
+diff --git a/tcp_bbr.c b/tcp_bbr.c
+index f4f477a..aec864a 100644
+--- a/net/ipv4/tcp_bbr.c
++++ b/net/ipv4/tcp_bbr.c
+@@ -181,7 +181,7 @@ struct bbr_context {
+ };
+ 
+ /* Window length of min_rtt filter (in sec): */
+-static const u32 bbr_min_rtt_win_sec = 10;
++static const u32 bbr_min_rtt_win_sec = 20;
+ /* Minimum time (in ms) spent at bbr_cwnd_min_target in BBR_PROBE_RTT mode: */
+ static const u32 bbr_probe_rtt_mode_ms = 200;
+ /* Window length of probe_rtt_min_us filter (in ms), and consequently the
+@@ -218,15 +218,15 @@ static const int bbr_startup_cwnd_gain = BBR_UNIT * 2;
+ /* The pacing gain in BBR_DRAIN is calculated to typically drain
+  * the queue created in BBR_STARTUP in a single round:
+  */
+-static const int bbr_drain_gain = BBR_UNIT * 1000 / 2885;
++static const int bbr_drain_gain = BBR_UNIT * 1200 / 2885;
+ /* The gain for deriving steady-state cwnd tolerates delayed/stretched ACKs: */
+ static const int bbr_cwnd_gain  = BBR_UNIT * 2;
+ /* The pacing_gain values for the PROBE_BW gain cycle, to discover/share bw: */
+ static const int bbr_pacing_gain[] = {
+ 	BBR_UNIT * 5 / 4,	/* UP: probe for more available bw */
+ 	BBR_UNIT * 91 / 100,	/* DOWN: drain queue and/or yield bw */
+-	BBR_UNIT,		/* CRUISE: try to use pipe w/ some headroom */
+-	BBR_UNIT,		/* REFILL: refill pipe to estimated 100% */
++	BBR_UNIT * 9 / 8,		/* CRUISE: try to use pipe w/ some headroom */
++	BBR_UNIT * 9 / 8,		/* REFILL: refill pipe to estimated 100% */
+ };
+ enum bbr_pacing_gain_phase {
+ 	BBR_BW_PROBE_UP		= 0,  /* push up inflight to probe for bw/vol */
+@@ -435,7 +435,7 @@ static unsigned long bbr_bw_to_pacing_rate(struct sock *sk, u32 bw, int gain)
+ 
+ 	rate = bbr_rate_bytes_per_sec(sk, rate, gain,
+ 				      bbr_pacing_margin_percent);
+-	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
++	rate = min_t(u64, rate, READ_ONCE(sk->sk_max_pacing_rate));
+ 	return rate;
+ }
+ 
+@@ -455,8 +455,8 @@ static void bbr_init_pacing_rate_from_rtt(struct sock *sk)
+ 	}
+ 	bw = (u64)tcp_snd_cwnd(tp) * BW_UNIT;
+ 	do_div(bw, rtt_us);
+-	sk->sk_pacing_rate =
+-	  bbr_bw_to_pacing_rate(sk, bw, bbr_param(sk, startup_pacing_gain));
++	WRITE_ONCE(sk->sk_pacing_rate,
++		   bbr_bw_to_pacing_rate(sk, bw, bbr_param(sk, startup_pacing_gain)));
+ }
+ 
+ /* Pace using current bw estimate and a gain factor. */
+@@ -468,8 +468,8 @@ static void bbr_set_pacing_rate(struct sock *sk, u32 bw, int gain)
+ 
+ 	if (unlikely(!bbr->has_seen_rtt && tp->srtt_us))
+ 		bbr_init_pacing_rate_from_rtt(sk);
+-	if (bbr_full_bw_reached(sk) || rate > sk->sk_pacing_rate)
+-		sk->sk_pacing_rate = rate;
++	if (bbr_full_bw_reached(sk) || rate > READ_ONCE(sk->sk_pacing_rate))
++		WRITE_ONCE(sk->sk_pacing_rate, rate);
+ }
+ 
+ /* Return the number of segments BBR would like in a TSO/GSO skb, given a
+@@ -484,7 +484,7 @@ static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
+ 	u64 bytes;
+ 
+ 	/* Budget a TSO/GSO burst size allowance based on bw (pacing_rate). */
+-	bytes = sk->sk_pacing_rate >> sk->sk_pacing_shift;
++	bytes = READ_ONCE(sk->sk_pacing_rate) >> READ_ONCE(sk->sk_pacing_shift);
+ 
+ 	/* Budget a TSO/GSO burst size allowance based on min_rtt. For every
+ 	 * K = 2^tso_rtt_shift microseconds of min_rtt, halve the burst.
+@@ -513,7 +513,7 @@ static u32 bbr_tso_segs_goal(struct sock *sk)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	return  bbr_tso_segs_generic(sk, tp->mss_cache, GSO_LEGACY_MAX_SIZE);
++	return bbr_tso_segs_generic(sk, tp->mss_cache, GSO_LEGACY_MAX_SIZE);
+ }
+ 
+ /* Save "last known good" cwnd so we can restore it after losses or PROBE_RTT */
+@@ -1312,7 +1312,7 @@ static void bbr_bound_cwnd_for_inflight_model(struct sock *sk)
+ }
+ 
+ /* How should we multiplicatively cut bw or inflight limits based on ECN? */
+-u32 bbr_ecn_cut(struct sock *sk)
++static u32 bbr_ecn_cut(struct sock *sk)
+ {
+ 	struct bbr *bbr = inet_csk_ca(sk);
+ 
+@@ -2033,7 +2033,7 @@ static bool bbr_run_fast_path(struct sock *sk, bool *update_model,
+ 	return false;
+ }
+ 
+-__bpf_kfunc void bbr_main(struct sock *sk, const struct rate_sample *rs)
++__bpf_kfunc static void bbr_main(struct sock *sk, u32 ack, int flag, const struct rate_sample *rs)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct bbr *bbr = inet_csk_ca(sk);
+@@ -2355,9 +2355,7 @@ static struct tcp_congestion_ops tcp_bbr_cong_ops __read_mostly = {
+ 	.set_state	= bbr_set_state,
+ };
+ 
+-BTF_SET8_START(tcp_bbr_check_kfunc_ids)
+-#ifdef CONFIG_X86
+-#ifdef CONFIG_DYNAMIC_FTRACE
++BTF_KFUNCS_START(tcp_bbr_check_kfunc_ids)
+ BTF_ID_FLAGS(func, bbr_init)
+ BTF_ID_FLAGS(func, bbr_main)
+ BTF_ID_FLAGS(func, bbr_sndbuf_expand)
+@@ -2367,9 +2365,7 @@ BTF_ID_FLAGS(func, bbr_cwnd_event)
+ BTF_ID_FLAGS(func, bbr_ssthresh)
+ BTF_ID_FLAGS(func, bbr_tso_segs)
+ BTF_ID_FLAGS(func, bbr_set_state)
+-#endif
+-#endif
+-BTF_SET8_END(tcp_bbr_check_kfunc_ids)
++BTF_KFUNCS_END(tcp_bbr_check_kfunc_ids)
+ 
+ static const struct btf_kfunc_id_set tcp_bbr_kfunc_set = {
+ 	.owner = THIS_MODULE,
