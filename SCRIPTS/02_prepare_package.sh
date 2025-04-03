@@ -143,9 +143,9 @@ cp -rf ../PATCH/kernel/btf/* ./target/linux/generic/hack-6.6/
 rm -rf ./target/linux/rockchip
 cp -rf ../immortalwrt_24/target/linux/rockchip ./target/linux/rockchip
 cp -rf ../PATCH/kernel/rockchip/* ./target/linux/rockchip/patches-6.6/
-wget https://github.com/immortalwrt/immortalwrt/raw/refs/tags/v23.05.4/target/linux/rockchip/patches-5.15/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch -O target/linux/rockchip/patches-6.6/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch
-#rm -rf package/boot/{rkbin,uboot-rockchip,arm-trusted-firmware-rockchip}
-#cp -rf ../immortalwrt_24/package/boot/uboot-rockchip ./package/boot/uboot-rockchip
+#wget https://github.com/immortalwrt/immortalwrt/raw/refs/tags/v23.05.4/target/linux/rockchip/patches-5.15/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch -O target/linux/rockchip/patches-6.6/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch
+rm -rf package/boot/{rkbin,uboot-rockchip,arm-trusted-firmware-rockchip}
+cp -rf ../immortalwrt_24/package/boot/uboot-rockchip ./package/boot/uboot-rockchip
 cp -rf ../immortalwrt_24/package/boot/arm-trusted-firmware-rockchip ./package/boot/arm-trusted-firmware-rockchip
 sed -i '/REQUIRE_IMAGE_METADATA/d' target/linux/rockchip/armv8/base-files/lib/upgrade/platform.sh
 # Disable Mitigations
@@ -238,6 +238,15 @@ wget https://github.com/openwrt/odhcp6c/pull/90.patch -O package/network/ipv6/od
 echo > ./feeds/packages/utils/watchcat/files/watchcat.config
 # 默认开启 Irqbalance
 #sed -i "s/enabled '0'/enabled '1'/g" feeds/packages/utils/irqbalance/files/irqbalance.config
+
+# 使用 TEO CPU 空闲调度器
+KERNEL_VERSION="6.6"
+CONFIG_CONTENT='
+CONFIG_CPU_IDLE_GOV_MENU=n
+CONFIG_CPU_IDLE_GOV_TEO=y
+'
+# 查找所有与内核 6.6 相关的配置文件并将这些配置项追加到文件末尾
+find ./target/linux/ -name "config-${KERNEL_VERSION}" | xargs -I{} sh -c "echo '$CONFIG_CONTENT' | tee -a {} > /dev/null"
 
 ### 最后的收尾工作 ###
 # Lets Fuck
