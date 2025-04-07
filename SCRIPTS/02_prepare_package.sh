@@ -3,12 +3,14 @@ clear
 
 ### 基础部分 ###
 # 使用 O2 级别的优化
-sed -i 's/Os/O3/g' include/target.mk
+sed -i 's/Os/O3 -march=znver3 -g0/g' include/target.mk
+sed -i 's/LDFLAGS="$(TARGET_LDFLAGS) $(EXTRA_LDFLAGS)"/LDFLAGS="$(TARGET_LDFLAGS) $(EXTRA_LDFLAGS)" -Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs -Wl,-s/g' include/package-defaults.mk
 sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
-rm -rf package/new/OpenWrt-Add/openwrt-r8168
-git clone https://github.com/sbwml/package_kernel_r8126 package/new/OpenWrt-Add/openwrt-r8168
-rm -rf package/network/utils/linux-atm
-git clone https://github.com/sbwml/package_network_utils_linux-atm package/network/utils/linux-atm
+sed -i 's/HOSTCC="$(HOSTCC)"/HOSTCC="gcc"/g' include/u-boot.mk
+#rm -rf package/new/OpenWrt-Add/openwrt-r8168
+#git clone https://github.com/sbwml/package_kernel_r8126 package/new/OpenWrt-Add/openwrt-r8168
+#rm -rf package/network/utils/linux-atm
+#git clone https://github.com/sbwml/package_network_utils_linux-atm package/network/utils/linux-atm
 #rm -rf package/boot/rkbin package/boot/uboot-rockchip package/boot/arm-trusted-firmware-rockchip
 #git clone https://github.com/sbwml/package_boot_uboot-rockchip package/boot/uboot-rockchip -b v2023.04
 #    git clone https://github.com/sbwml/arm-trusted-firmware-rockchip package/boot/arm-trusted-firmware-rockchip -b 0419
