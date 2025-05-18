@@ -48,7 +48,6 @@ natmap_repo="https://github.com/blueberry-pie-11/luci-app-natmap"
 xwrt_repo="https://github.com/sbwml/package_new_natflow package/new/natflow"
 qosmate="https://github.com/hudra0/qosmate.git"
 luci_app_qosmate="https://github.com/hudra0/luci-app-qosmate.git"
-tcp_brutal="https://github.com/haruue-net/openwrt-tcp-brutal.git"
 
 # 开始克隆仓库，并行执行
 clone_repo $openwrt_repo $latest_release openwrt &
@@ -66,7 +65,6 @@ clone_repo $docker_lib_repo master docker_lib &
 
 clone_repo $qosmate main qosmate &
 clone_repo $luci_app_qosmate main luci-app-qosmate &
-clone_repo $tcp_brutal master tcp_brutal &
 
 # 等待所有后台任务完成
 wait

@@ -15,6 +15,8 @@ sed -i 's/HOSTCC="$(HOSTCC)"/HOSTCC="gcc"/g' include/u-boot.mk
 #git clone https://github.com/sbwml/package_boot_uboot-rockchip package/boot/uboot-rockchip -b v2023.04
 #    git clone https://github.com/sbwml/arm-trusted-firmware-rockchip package/boot/arm-trusted-firmware-rockchip -b 0419
 
+echo "src-git tcp_brutal https://github.com/haruue-net/openwrt-tcp-brutal.git;master" >> feeds.conf.default
+
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
