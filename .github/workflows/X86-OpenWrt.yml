@@ -10,23 +10,23 @@ on:
 jobs:
   build:
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
-    if: github.event.repository.owner.id == github.event.sender.id
+#    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
     - name: Show system
       run: |
         echo -e "Total CPU cores\t: $(nproc)"
         cat /proc/cpuinfo | grep 'model name'
-#    - name: Maximize build space
-#      uses: easimon/maximize-build-space@master
-#      with:
-#        swap-size-mb: 1024
-#        temp-reserve-mb: 512
-#        root-reserve-mb: 4608
-#        remove-dotnet: 'true'
-#        remove-android: 'true'
-#        remove-haskell: 'true'
-#        remove-codeql: 'true'
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        swap-size-mb: 1024
+        temp-reserve-mb: 512
+        root-reserve-mb: 4608
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
     - name: Checkout
       uses: actions/checkout@main
     - name: Init build dependencies
