@@ -48,6 +48,7 @@ natmap_repo="https://github.com/blueberry-pie-11/luci-app-natmap"
 xwrt_repo="https://github.com/sbwml/package_new_natflow package/new/natflow"
 qosmate="https://github.com/hudra0/qosmate.git"
 luci_app_qosmate="https://github.com/hudra0/luci-app-qosmate.git"
+lucky="https://github.com/gdy666/luci-app-lucky.git"
 
 # 开始克隆仓库，并行执行
 clone_repo $openwrt_repo $latest_release openwrt &
@@ -65,6 +66,8 @@ clone_repo $docker_lib_repo master docker_lib &
 
 clone_repo $qosmate main qosmate &
 clone_repo $luci_app_qosmate main luci-app-qosmate &
+clone_repo $lucky main lucky
+
 
 # 等待所有后台任务完成
 wait
@@ -72,6 +75,9 @@ wait
 # 进行一些处理
 find openwrt/package/* -maxdepth 0 ! -name 'firmware' ! -name 'kernel' ! -name 'base-files' ! -name 'Makefile' -exec rm -rf {} +
 rm -rf ./openwrt_snap/package/firmware ./openwrt_snap/package/kernel ./openwrt_snap/package/base-files ./openwrt_snap/package/Makefile
+mv ./openwrt_snap/package/lucky/luci-app-lucky ./openwrt/package/
+mv ./openwrt_snap/package/lucky/lucky ./openwrt/package/
+rm -rf ./openwrt_snap/package/lucky
 cp -rf ./openwrt_snap/package/* ./openwrt/package/
 cp -rf ./openwrt_snap/feeds.conf.default ./openwrt/feeds.conf.default
 # 修复缺失的 kmod-drm-lima
