@@ -232,7 +232,7 @@ CONFIG_PACKAGE_kmod-crypto-xcbc=y
 CONFIG_PACKAGE_kmod-crypto-xxhash=y
 
 
-CONFIG_KERNEL_CFLAGS="-O3 -mllvm -hot-cold-split=true -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-invariant-load-hoisting -mllvm -polly-run-inliner -mllvm -polly-loopfusion-greedy=1 -mllvm -polly-reschedule=1 -mllvm -polly-postopts=1 -mllvm -polly-vectorizer=stripmine -mllvm -polly-run-dce -march=znver3"
+CONFIG_KERNEL_CFLAGS="-O3 -fplugin=LLVMPolly.so -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-invariant-load-hoisting -mllvm -polly-loopfusion-greedy -mllvm -polly-run-inliner -mllvm -polly-vectorizer=stripmine -mllvm -polly-run-dce -march=znver3"
 CONFIG_KERNEL_CC_OPTIMIZE_FOR_PERFORMANCE=y
 CONFIG_PACKAGE_qosmate=y
 CONFIG_PACKAGE_luci-app-qosmate=y
