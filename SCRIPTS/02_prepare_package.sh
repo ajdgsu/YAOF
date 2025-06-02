@@ -64,7 +64,7 @@ cp -rf ../PATCH/kernel/arm/* ./target/linux/generic/hack-6.6/
 cp -rf ../PATCH/kernel/bbr3/* ./target/linux/generic/backport-6.6/
 # LRNG
 cp -rf ../PATCH/kernel/lrng/* ./target/linux/generic/hack-6.6/
-cp -rf ../PATCH/kernel/0001-prjc.patch ./target/linux/generic/backport-6.6/
+#cp -rf ../PATCH/kernel/0001-prjc.patch ./target/linux/generic/backport-6.6/
 echo '
 # CONFIG_RANDOM_DEFAULT_IMPL is not set
 CONFIG_LRNG=y
