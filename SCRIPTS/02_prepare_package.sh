@@ -3,7 +3,7 @@ clear
 
 ### 基础部分 ###
 # 使用 O2 级别的优化
-sed -i 's/Os/O3 -march=znver3 -g0/g' include/target.mk
+sed -i 's/Os/O3 -march=znver3 -g0 -Wno-error -Wno-error=mismatched-new-delete/g' include/target.mk
 #sed -i 's/LDFLAGS="$(TARGET_LDFLAGS) $(EXTRA_LDFLAGS)"/LDFLAGS="$(TARGET_LDFLAGS) $(EXTRA_LDFLAGS)" -Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs -Wl,-s/g' include/package-defaults.mk
 sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
 sed -i 's/HOSTCC="$(HOSTCC)"/HOSTCC="gcc"/g' include/u-boot.mk
