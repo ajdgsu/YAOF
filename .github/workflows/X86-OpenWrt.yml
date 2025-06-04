@@ -43,7 +43,7 @@ jobs:
         sudo -E apt-fast -y -qq install dos2unix dwarves quilt npm jq
         sudo -E apt remove --purge clang-18 llvm-18
         sudo -E apt autoremove -y
-        export PATH=/usr/lib/clang/20/bin:$PATH
+        export PATH=/usr/lib/llvm-20/bin:$PATH
         sudo -E npm install -g pnpm
         pip3 install --user -U pylibfdt --break-system-packages
         sudo -E apt-get -qq autoremove --purge
