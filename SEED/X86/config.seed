@@ -280,3 +280,5 @@ CONFIG_PACKAGE_luci-app-lucky=y
 # CONFIG_PACKAGE_kmod-iio-bme680-spi is not set
 # CONFIG_PACKAGE_kmod-iio-bme680-i2c is not set
 # CONFIG_PACKAGE_kmod-iio-bme680 is not set
+# CONFIG_PACKAGE_kmod-r8168 is not set
+# iCONFIG_PACKAGE_kmod-r8168-rss is not set
