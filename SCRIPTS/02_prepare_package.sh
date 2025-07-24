@@ -231,6 +231,9 @@ patch -p1 <../PATCH/pkgs/odhcp6c/1002-odhcp6c-support-dhcpv6-hotplug.patch
 # ODHCPD
 mkdir -p package/network/services/odhcpd/patches
 cp -f ../PATCH/pkgs/odhcpd/0001-odhcpd-improve-RFC-9096-compliance.patch ./package/network/services/odhcpd/patches/0001-odhcpd-improve-RFC-9096-compliance.patch
+#wget https://github.com/openwrt/odhcpd/pull/211.patch -O package/network/services/odhcpd/patches/211.patch
+wget https://github.com/openwrt/odhcpd/pull/219.patch -O package/network/services/odhcpd/patches/219.patch
+wget https://github.com/openwrt/odhcpd/pull/242.patch -O package/network/services/odhcpd/patches/242.patch
 mkdir -p package/network/ipv6/odhcp6c/patches
 wget https://github.com/openwrt/odhcp6c/pull/75.patch -O package/network/ipv6/odhcp6c/patches/75.patch
 wget https://github.com/openwrt/odhcp6c/pull/80.patch -O package/network/ipv6/odhcp6c/patches/80.patch
@@ -238,6 +241,7 @@ wget https://github.com/openwrt/odhcp6c/pull/82.patch -O package/network/ipv6/od
 wget https://github.com/openwrt/odhcp6c/pull/83.patch -O package/network/ipv6/odhcp6c/patches/83.patch
 wget https://github.com/openwrt/odhcp6c/pull/84.patch -O package/network/ipv6/odhcp6c/patches/84.patch
 wget https://github.com/openwrt/odhcp6c/pull/90.patch -O package/network/ipv6/odhcp6c/patches/90.patch
+wget https://github.com/openwrt/odhcp6c/pull/98.patch -O package/network/ipv6/odhcp6c/patches/98.patch
 # watchcat
 echo > ./feeds/packages/utils/watchcat/files/watchcat.config
 # 默认开启 Irqbalance
