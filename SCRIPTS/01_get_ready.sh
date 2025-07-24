@@ -76,9 +76,13 @@ wait
 # 进行一些处理
 find openwrt/package/* -maxdepth 0 ! -name 'firmware' ! -name 'kernel' ! -name 'base-files' ! -name 'Makefile' -exec rm -rf {} +
 rm -rf ./openwrt_snap/package/firmware ./openwrt_snap/package/kernel ./openwrt_snap/package/base-files ./openwrt_snap/package/Makefile
-mv ./openwrt_snap/package/lucky/luci-app-lucky ./openwrt/package/
-mv ./openwrt_snap/package/lucky/lucky ./openwrt/package/
-rm -rf ./openwrt_snap/package/lucky
+#mv ./openwrt_snap/package/lucky/luci-app-lucky ./openwrt/package/
+#mv ./openwrt_snap/package/lucky/lucky ./openwrt/package/
+#rm -rf ./openwrt_snap/package/lucky
+cp -R lucky/luci-app-lucky ./
+cp -R lucky/lucky ./lucky-1
+rm -rf lucky
+mv lucky-1 lucky
 cp -rf ./openwrt_snap/package/* ./openwrt/package/
 cp -rf ./openwrt_snap/feeds.conf.default ./openwrt/feeds.conf.default
 # 修复缺失的 kmod-drm-lima
