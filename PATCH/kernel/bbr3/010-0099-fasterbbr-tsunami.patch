@@ -16,7 +16,7 @@ index f4f477a..aec864a 100644
   * the queue created in BBR_STARTUP in a single round:
   */
 -static const int bbr_drain_gain = BBR_UNIT * 1000 / 2885;
-+static const int bbr_drain_gain = BBR_UNIT * 1200 / 2885;
++static const int bbr_drain_gain = BBR_UNIT * 1100 / 2885;
  /* The gain for deriving steady-state cwnd tolerates delayed/stretched ACKs: */
  static const int bbr_cwnd_gain  = BBR_UNIT * 2;
  /* The pacing_gain values for the PROBE_BW gain cycle, to discover/share bw: */
@@ -25,8 +25,8 @@ index f4f477a..aec864a 100644
  	BBR_UNIT * 91 / 100,	/* DOWN: drain queue and/or yield bw */
 -	BBR_UNIT,		/* CRUISE: try to use pipe w/ some headroom */
 -	BBR_UNIT,		/* REFILL: refill pipe to estimated 100% */
-+	BBR_UNIT * 9 / 8,		/* CRUISE: try to use pipe w/ some headroom */
-+	BBR_UNIT * 9 / 8,		/* REFILL: refill pipe to estimated 100% */
++	BBR_UNIT * 11 / 10,		/* CRUISE: try to use pipe w/ some headroom */
++	BBR_UNIT * 11 / 10,		/* REFILL: refill pipe to estimated 100% */
  };
  enum bbr_pacing_gain_phase {
  	BBR_BW_PROBE_UP		= 0,  /* push up inflight to probe for bw/vol */
