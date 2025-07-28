@@ -36,7 +36,7 @@ jobs:
         sudo -E apt remove --purge man-db clang-18 llvm-18 snap snapd
         sudo -E apt-get -qq update
         sudo -E apt-get -qq upgrade
-        apt dist-upgrade -y
+        sudo apt dist-upgrade -y
         sudo /bin/bash -c "$(curl -sL https://git.io/vokNn)"
         sudo -E wget https://apt.llvm.org/llvm.sh
         sudo -E chmod +x llvm.sh
