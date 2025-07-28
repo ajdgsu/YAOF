@@ -52,7 +52,7 @@ jobs:
         sudo -E apt remove --purge clang-18 llvm-18
         sudo -E wget https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/clangv3/20-x86-64-v3.tar.xz -O /opt/20.tar.xz
         sudo -E tar xJf /opt/20.tar.xz -C /opt
-        sudo -E rm /opt/20.tar.xz        
+        sudo -E rm /opt/20.tar.xz
         export PATH=/opt/20-x86-64-v3/bin:$PATH
         sudo -E npm install -g pnpm
         pip3 install --user -U pylibfdt --break-system-packages
@@ -94,6 +94,7 @@ jobs:
     - name: Make Config
       working-directory: ${{ github.workspace }}/openwrt
       run: |
+        export PATH=/opt/20-x86-64-v3/bin:$PATH
         make defconfig
     - name: Get Architecture
       working-directory: ${{ github.workspace }}/openwrt
@@ -110,6 +111,7 @@ jobs:
     - name: Make Download
       working-directory: ${{ github.workspace }}/openwrt
       run: |
+        export PATH=/opt/20-x86-64-v3/bin:$PATH
         make download -j50
     - name: Compile Openwrt
       working-directory: ${{ github.workspace }}/openwrt
@@ -117,6 +119,7 @@ jobs:
       continue-on-error: true
       run: |
         #echo | make kernel_oldconfig -j$(($(nproc) + 1)) 
+        export PATH=/opt/20-x86-64-v3/bin:$PATH
         make -j$(($(nproc) + 1)) package/network/utils/nftables/refresh V=s
         IGNORE_ERRORS=1 make -j$(($(nproc) + 1))
         echo $?
@@ -126,6 +129,7 @@ jobs:
       run: |
         cat ./.config
         echo '================================================================'
+        export PATH=/opt/20-x86-64-v3/bin:$PATH
         make -j1 V=s
     - name: Organize files
       id: organize
