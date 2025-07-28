@@ -33,7 +33,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo -E apt remove --purge man-db clang-18 llvm-18
+        sudo -E apt remove --purge man-db clang-18 llvm-18 snap
         sudo -E apt-get -qq update
         sudo -E apt-get -qq upgrade
         sudo /bin/bash -c "$(curl -sL https://git.io/vokNn)"
