@@ -39,17 +39,21 @@ jobs:
         rm -fr ~/snap
         sudo apt-mark hold snapd
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq upgrade
+        sudo -E apt-get -y -qq upgrade
         sudo apt dist-upgrade -y
         sudo /bin/bash -c "$(curl -sL https://git.io/vokNn)"
-        sudo -E wget https://apt.llvm.org/llvm.sh
-        sudo -E chmod +x llvm.sh
-        sudo -E ./llvm.sh 20
+        #sudo -E wget https://apt.llvm.org/llvm.sh
+        #sudo -E chmod +x llvm.sh
+        #sudo -E ./llvm.sh 20
         
-        sudo -E apt -y install asciidoc bash bcc bin86 binutils bison bzip2 file flex g++ g++-multilib gawk gcc-multilib gettext git gzip help2man intltool libboost-dev libelf-dev libncurses-dev libssl-dev libthread-queue-any-perl libusb-dev libxml-parser-perl make patch perl-modules python3-dev python3-pip python3-pyelftools python3-setuptools rsync sharutils swig time unzip util-linux wget xsltproc zlib1g-dev zip zstd clang-format clang-tidy clang-tools clang clangd libc++-dev libc++1 libc++abi-dev libc++abi1 libclang-dev libclang1 liblldb-dev libllvm-ocaml-dev libomp-dev libomp5 lld lldb llvm-dev llvm-runtime llvm python3-clang llvm-20-linker-tools libpolly-20-dev
+        #sudo -E apt-get -qq install asciidoc bash bcc bin86 binutils bison bzip2 file flex g++ g++-multilib gawk gcc-multilib gettext git gzip help2man intltool libboost-dev libelf-dev libncurses-dev libssl-dev libthread-queue-any-perl libusb-dev libxml-parser-perl make patch perl-modules python3-dev python3-pip python3-pyelftools python3-setuptools rsync sharutils swig time unzip util-linux wget xsltproc zlib1g-dev zip zstd clang-format clang-tidy clang-tools clang clangd libc++-dev libc++1 libc++abi-dev libc++abi1 libclang-dev libclang1 liblldb-dev libllvm-ocaml-dev libomp-dev libomp5 lld lldb llvm-dev llvm-runtime llvm python3-clang llvm-20-linker-tools libpolly-20-dev
+        sudo -E apt-get -qq install asciidoc bash bcc bin86 binutils bison bzip2 file flex g++ g++-multilib gawk gcc-multilib gettext git gzip help2man intltool libboost-dev libelf-dev libncurses-dev libssl-dev libthread-queue-any-perl libusb-dev libxml-parser-perl make patch perl-modules python3-dev python3-pip python3-pyelftools python3-setuptools rsync sharutils swig time unzip util-linux wget xsltproc zlib1g-dev zip zstd python3-clang
         sudo -E apt-fast -y -qq install dos2unix dwarves quilt npm jq
         sudo -E apt remove --purge clang-18 llvm-18
-        export PATH=/usr/lib/llvm-20/bin:$PATH
+        sudo -E wget https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/clangv3/20-x86-64-v3.tar.xz -O /var/lib/20.tar.xz
+        sudo -E tar xJf /var/lib/20.tar.xz -C /var/lib
+        sudo -E rm /var/lib/20.tar.xz        
+        export PATH=/var/lib/20-x86-64-v3/bin:$PATH
         sudo -E npm install -g pnpm
         pip3 install --user -U pylibfdt --break-system-packages
         sudo -E apt-get -qq autoremove --purge
