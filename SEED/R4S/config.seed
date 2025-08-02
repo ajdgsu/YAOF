@@ -256,3 +256,5 @@ CONFIG_EXTRA_OPTIMIZATION=""
 # CONFIG_PACKAGE_kselftests-bpf is not set
 CONFIG_PACKAGE_lsof=y
 CONFIG_PACKAGE_fstrim=y
+CONFIG_PACKAGE_luci-app-crowdsec-firewall-bouncer=y
+CONFIG_PACKAGE_crowdsec=y
