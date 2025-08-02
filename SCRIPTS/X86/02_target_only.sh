@@ -1,6 +1,5 @@
 #!/bin/bash
-
-sed -i 's/O2/O2 -march=znver3/g' include/target.mk
+sed -i 's/O2/O2 -march=znver3 -Wno-error -Wno-error=mismatched-new-delete/g' include/target.mk
 
 # libsodium
 sed -i 's,no-mips16 no-lto,no-mips16,g' feeds/packages/libs/libsodium/Makefile
