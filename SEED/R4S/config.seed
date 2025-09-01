@@ -231,7 +231,7 @@ CONFIG_PACKAGE_kmod-crypto-user=y
 CONFIG_PACKAGE_kmod-crypto-xcbc=y
 CONFIG_PACKAGE_kmod-crypto-xxhash=y
 
-CONFIG_KERNEL_CFLAGS="-O2 -ffp-contract=fast -mllvm -hot-cold-split=true -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-invariant-load-hoisting -mllvm -polly-run-inliner -mllvm -polly-loopfusion-greedy=1 -mllvm -polly-reschedule=1 -mllvm -polly-postopts=1 -mllvm -polly-vectorizer=stripmine -mllvm -polly-run-dce -mllvm -regalloc-enable-advisor=release -Wno-error=unknown-warning-option -Wno-error=unused-but-set-variable -Wno-error=uninitialized -Wno-error=parentheses-equality -Wno-error=strict-prototypes -Wno-error=tautological-overlap-compare -Wno-error=array-bounds -Wno-error=implicit-fallthrough -Wno-error=header-guard -Wno-error=unused-const-variable -Wno-error=pragma-pack"
+CONFIG_KERNEL_CFLAGS="-O2 -ffp-contract=fast -march=armv8-a+crc+crypto"
 CONFIG_KERNEL_CC_OPTIMIZE_FOR_PERFORMANCE=y
 CONFIG_PACKAGE_qosmate=y
 CONFIG_PACKAGE_luci-app-qosmate=y
@@ -251,7 +251,7 @@ CONFIG_PACKAGE_nginx-mod-brotli=y
 CONFIG_TARGET_SQUASHFS_BLOCK_SIZE=4
 CONFIG_USE_GC_SECTIONS=y
 CONFIG_USE_LTO=y
-CONFIG_KERNEL_CC="clang"
+# CONFIG_KERNEL_CC is not set
 CONFIG_EXTRA_OPTIMIZATION=""
 # CONFIG_PACKAGE_kselftests-bpf is not set
 CONFIG_PACKAGE_lsof=y
@@ -264,4 +264,5 @@ CONFIG_PACKAGE_kmod-brutal=y
 # CONFIG_PACKAGE_kmod-r8168 is not set
 # CONFIG_PACKAGE_kmod-r8168-rss is not set
 # CONFIG_TARGET_ROOTFS_EXT4FS is not set
-CONFIG_TARGET_ROOTFS_PARTSIZE=30720
+CONFIG_TARGET_ROOTFS_PARTSIZE=2048
+# CONFIG_PACKAGE_kmod-usb-serial-dmx_usb_module is not set
