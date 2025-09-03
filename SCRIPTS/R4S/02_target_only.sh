@@ -4,7 +4,7 @@ clear
 # 使用特定的优化
 sed -i 's,-mcpu=generic,-march=armv8-a+crc+crypto,g' include/target.mk
 sed -i 's,kmod-r8168,kmod-r8169,g' target/linux/rockchip/image/armv8.mk
-sed -i 's/Os/O2 -march=armv8-a+crc+crypto -Wno-error -Wno-error=mismatched-new-delete/g' include/target.mk
+sed -i 's/Os/O3 -march=armv8-a+crc+crypto -Wno-error -Wno-error=mismatched-new-delete/g' include/target.mk
 
 #Vermagic
 latest_version="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9][4-9]/p' | sed -n 1p | sed 's/v//g' | sed 's/.tar.gz//g')"
