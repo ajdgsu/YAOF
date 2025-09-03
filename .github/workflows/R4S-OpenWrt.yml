@@ -27,6 +27,8 @@ jobs:
         remove-android: 'true'
         remove-haskell: 'true'
         remove-codeql: 'true'
+    - name: Checkout
+      uses: actions/checkout@main
     - name: Init build dependencies
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -103,41 +105,4 @@ jobs:
       run: |
         #echo | make kernel_oldconfig -j$(($(nproc) + 1)) 
         make -j$(($(nproc) + 1)) package/network/utils/nftables/refresh V=s
-        IGNORE_ERRORS=1 make -j$(($(nproc) + 1))
-        echo $?
-    - name: If Error
-      working-directory: ${{ github.workspace }}/openwrt
-      if: steps.compileopenwrt.outcome == 'failure'
-      run: |
-        cat ./.config
-        echo '================================================================'
-        make -j1 V=s
-    - name: Organize files
-      id: organize
-      run: |
-        rm -rf ./artifact/
-        mkdir -p ./artifact/
-        mv openwrt/bin/targets/rockchip/armv8/*sysupgrade.img* ./artifact/
-        cd ./artifact/
-        ls -Ahl
-        gzip -d *.gz && exit 0
-        gzip --best *.img
-        ls -Ahl
-        sha256sum openwrt*r4s* | tee R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
-        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip *r4s*ext4*
-        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip *r4s*squashfs*
-        ls -Ahl
-    - name: Create release
-      id: create_release
-      uses: ncipollo/release-action@main
-      with:
-        name: OpenWRT-${{ env.latest_release }}
-        allowUpdates: true
-        prerelease: false
-        tag: ${{ env.latest_release }}
-        commit: "24.10"
-        replacesArtifacts: true
-        token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: ./artifact/*.zip
-    - name: Print Disk Space After
-      run: df -h
+        IGNORE_ERRORS=1 make -j$(($(nproc) +
