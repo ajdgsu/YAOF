@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
@@ -20,9 +20,9 @@ jobs:
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
-        swap-size-mb: 4096
+        swap-size-mb: 1024
         temp-reserve-mb: 512
-        root-reserve-mb: 8192
+        root-reserve-mb: 4608
         remove-dotnet: 'true'
         remove-android: 'true'
         remove-haskell: 'true'
@@ -41,10 +41,6 @@ jobs:
         pip3 install --user -U pylibfdt --break-system-packages
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-#        wget -q https://github.com/ajdgsu/clang-19-x86-64-v3-mlgo/releases/download/clang/clang-19.1.7.tar.xz
-#        sudo tar --strip-components=1 -C /opt/clang -xf clang-19.1.7.tar.xz
-#        rm -rf clang-19.1.7.tar.xz
-        clang --version
         sudo -E git config --global user.name 'GitHub Actions' && git config --global user.email 'noreply@github.com'
         sudo -E git config --global core.abbrev auto
         df -h
@@ -105,4 +101,41 @@ jobs:
       run: |
         #echo | make kernel_oldconfig -j$(($(nproc) + 1)) 
         make -j$(($(nproc) + 1)) package/network/utils/nftables/refresh V=s
-        IGNORE_ERRORS=1 make -j$(($(nproc) +
+        IGNORE_ERRORS=1 make -j$(($(nproc) + 1))
+        echo $?
+    - name: If Error
+      working-directory: ${{ github.workspace }}/openwrt
+      if: steps.compileopenwrt.outcome == 'failure'
+      run: |
+        cat ./.config
+        echo '================================================================'
+        make -j1 V=s
+    - name: Organize files
+      id: organize
+      run: |
+        rm -rf ./artifact/
+        mkdir -p ./artifact/
+        mv openwrt/bin/targets/rockchip/armv8/*sysupgrade.img* ./artifact/
+        cd ./artifact/
+        ls -Ahl
+        gzip -d *.gz && exit 0
+        gzip --best *.img
+        ls -Ahl
+        sha256sum openwrt*r4s* | tee R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
+        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip *r4s*ext4*
+        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip *r4s*squashfs*
+        ls -Ahl
+    - name: Create release
+      id: create_release
+      uses: ncipollo/release-action@main
+      with:
+        name: OpenWRT-${{ env.latest_release }}
+        allowUpdates: true
+        prerelease: false
+        tag: ${{ env.latest_release }}
+        commit: "24.10"
+        replacesArtifacts: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: ./artifact/*.zip
+    - name: Print Disk Space After
+      run: df -h
