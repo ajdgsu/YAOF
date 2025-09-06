@@ -121,9 +121,9 @@ jobs:
         gzip -d *.gz && exit 0
         gzip --best *.img
         ls -Ahl
-        sha256sum openwrt*R4S* | tee R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
-        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip *R4S*ext4*
-        zip R4S-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip *R4S*squashfs*
+        sha256sum openwrt*r4se* | tee r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
+        zip r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip *r4se*ext4*
+        zip r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip *r4se*squashfs*
         ls -Ahl
     - name: Create release
       id: create_release
