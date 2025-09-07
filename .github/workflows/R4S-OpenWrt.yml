@@ -35,7 +35,6 @@ jobs:
       run: |
         sudo -E apt -qq update
         sudo -E apt -qqy upgrade
-#        sudo /bin/bash -c "$(curl -sL https://git.io/vokNn)"
         sudo -E apt -y -qq install asciidoc bash bcc bin86 binutils bison bzip2 clang llvm file flex g++ g++-multilib gawk gcc-multilib gettext git gzip help2man intltool libboost-dev libelf-dev libncurses-dev libssl-dev libthread-queue-any-perl libusb-dev libxml-parser-perl make patch perl-modules python3-dev python3-pip python3-pyelftools python3-setuptools rsync sharutils swig time unzip util-linux wget xsltproc zlib1g-dev zip zstd
         sudo -E apt -y -qq install dos2unix dwarves quilt npm jq
         sudo -E npm install -g pnpm
@@ -123,7 +122,6 @@ jobs:
         gzip --best *.img
         ls -Ahl
         sha256sum openwrt*r4se* | tee r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
-#        zip r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip *r4se*ext4*
         zip r4se-GC404-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip *r4se*squashfs*
         ls -Ahl
     - name: Create release
