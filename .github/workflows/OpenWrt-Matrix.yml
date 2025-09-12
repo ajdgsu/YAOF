@@ -286,7 +286,6 @@ jobs:
           gzip --best *.img
           ls -Ahl
           sha256sum openwrt*${{ env.sha_match }}* | tee ${{ env.artifact_prefix }}-$(date +%Y-%m-%d)-${{ env.latest_release }}.sha256sum
-          zip ${{ env.artifact_prefix }}-$(date +%Y-%m-%d)-${{ env.latest_release }}-ext4.zip ${{ env.ext4_zip }}
           zip ${{ env.artifact_prefix }}-$(date +%Y-%m-%d)-${{ env.latest_release }}-sfs.zip ${{ env.sfs_zip }}
           ls -Ahl
 
