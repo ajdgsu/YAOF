@@ -275,6 +275,6 @@ CONFIG_PACKAGE_git-http=y
 CONFIG_PACKAGE_git-lfs=y
 CONFIG_PACKAGE_vim=y
 # CONFIG_PACKAGE_vim-full is not set
-
+CONFIG_PACKAGE_jq=y
 
 
