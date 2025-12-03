@@ -25,8 +25,8 @@ index f4f477a..aec864a 100644
  	BBR_UNIT * 91 / 100,	/* DOWN: drain queue and/or yield bw */
 -	BBR_UNIT,		/* CRUISE: try to use pipe w/ some headroom */
 -	BBR_UNIT,		/* REFILL: refill pipe to estimated 100% */
-+	BBR_UNIT * 11 / 10,		/* CRUISE: try to use pipe w/ some headroom */
-+	BBR_UNIT * 11 / 10,		/* REFILL: refill pipe to estimated 100% */
++	BBR_UNIT * 5 / 4,		/* CRUISE: try to use pipe w/ some headroom */
++	BBR_UNIT * 5 / 4,		/* REFILL: refill pipe to estimated 100% */
  };
  enum bbr_pacing_gain_phase {
  	BBR_BW_PROBE_UP		= 0,  /* push up inflight to probe for bw/vol */
