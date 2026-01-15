@@ -10,7 +10,7 @@ sed -i 's,define Package\/iptables\/Default,define Package\/iptables\/Default\n 
 sed -i 's,define Package\/nftables\/Default,define Package\/nftables\/Default\n  CFLAGS += -O3 -funroll-loops --param max-unroll-times=8 --param max-unrolled-insns=500 --param max-average-unrolled-insns=50,g' package/network/utils/nftables/Makefile
 
 #Vermagic
-latest_version="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9][4-9]/p' | sed -n 1p | sed 's/v//g' | sed 's/.tar.gz//g')"
+latest_version="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9]4/p' | sed -n 1p | sed 's/v//g' | sed 's/.tar.gz//g')"
 wget https://downloads.openwrt.org/releases/${latest_version}/targets/rockchip/armv8/profiles.json
 jq -r '.linux_kernel.vermagic' profiles.json >.vermagic
 sed -i -e 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
