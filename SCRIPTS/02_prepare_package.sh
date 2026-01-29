@@ -266,6 +266,8 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
 ###clang
     rm -rf feeds/packages/net/xtables-addons
     git clone https://github.com/sbwml/kmod_packages_net_xtables-addons feeds/packages/net/xtables-addons
+    # Fix xtables-addons build with kernel 6.6 - add implicit function declaration warning suppression
+    sed -i 's/PKG_FIXUP:=autoreconf/PKG_FIXUP:=autoreconf\n\nEXTRA_CFLAGS+=-Wno-error=implicit-function-declaration -Wno-implicit-function-declaration/' feeds/packages/net/xtables-addons/Makefile
     # netatop
     sed -i 's/$(MAKE)/$(KERNEL_MAKE)/g' feeds/packages/admin/netatop/Makefile
     cp -f ../PATCH/kernel/clang/900-fix-build-with-clang.patch feeds/packages/admin/netatop/patches/900-fix-build-with-clang.patch
