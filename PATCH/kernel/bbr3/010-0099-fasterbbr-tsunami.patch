@@ -1,7 +1,7 @@
 diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c
 index f4f477a..dc6fbc3 100644
---- a/tcp_bbr.c
-+++ b/tcp_bbr.c
+--- a/net/ipv4/tcp_bbr.c
++++ b/net/ipv4/tcp_bbr.c
 @@ -181,14 +181,14 @@ struct bbr_context {
  };
 
