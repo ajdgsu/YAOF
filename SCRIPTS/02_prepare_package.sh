@@ -4,6 +4,9 @@ clear
 ### 基础部分 ###
 # 使用 O2 级别的优化
 sed -i 's/Os/O2/g' include/target.mk
+sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
+sed -i 's/HOSTCC="$(HOSTCC)"/HOSTCC="gcc"/g' include/u-boot.mk
+echo "src-git tcp_brutal https://github.com/haruue-net/openwrt-tcp-brutal.git;master" >> feeds.conf.default
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
@@ -174,6 +177,21 @@ popd
 # rust
 wget https://github.com/rust-lang/rust/commit/e8d97f0.patch -O feeds/packages/lang/rust/patches/e8d97f0.patch
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+RUST_VALUES_FILE="feeds/packages/lang/rust/rust-values.mk"
+if [ -f "${RUST_VALUES_FILE}" ]; then
+	if ! grep -q '^RUSTC_GLOBAL_CODEGEN_FLAGS:=-C lto=true -C opt-level=3$' "${RUST_VALUES_FILE}"; then
+		sed -i '/^CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS)$/i \
+# Global rustc codegen tuning for Rust packages using rust-package.mk.\
+RUSTC_GLOBAL_CODEGEN_FLAGS:=-C lto=true -C opt-level=3\
+ifeq ($(ARCH),x86_64)\
+  RUSTC_GLOBAL_CODEGEN_FLAGS+=-C target-cpu=znver4\
+endif\
+' "${RUST_VALUES_FILE}"
+	fi
+
+	sed -i 's|^CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS).*|CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS) $(RUSTC_GLOBAL_CODEGEN_FLAGS)|' "${RUST_VALUES_FILE}"
+	sed -i 's|^CARGO_PROFILE_RELEASE_OPT_LEVEL=.*|CARGO_PROFILE_RELEASE_OPT_LEVEL=3|' "${RUST_VALUES_FILE}"
+fi
 # mount cgroupv2
 pushd feeds/packages
 #patch -p1 <../../../PATCH/pkgs/cgroupfs-mount/0001-fix-cgroupfs-mount.patch
@@ -215,6 +233,15 @@ sed -i '/boot()/,+2d' feeds/packages/net/ddns-scripts/files/etc/init.d/ddns
 rm -rf ./feeds/luci/applications/luci-app-dockerman
 cp -rf ../dockerman/applications/luci-app-dockerman ./feeds/luci/applications/luci-app-dockerman
 sed -i '/auto_start/d' feeds/luci/applications/luci-app-dockerman/root/etc/uci-defaults/luci-app-dockerman
+# qosmate
+cp -rf ../luci-app-qosmate ./package/new
+cp -rf ../qosmate ./package/new
+cp -rf ../lucky ./package/new
+# nginx
+rm -f feeds/packages/net/nginx-util/files/nginx.config
+cp -f ../PATCH/nginx/nginx.config feeds/packages/net/nginx-util/files
+rm -f feeds/packages/net/nginx-util/files/uci.conf.template
+cp -f ../PATCH/nginx/uci.conf.template feeds/packages/net/nginx-util/files
 pushd feeds/packages
 wget -qO- https://github.com/openwrt/packages/commit/e2e5ee69.patch | patch -p1
 wget -qO- https://github.com/openwrt/packages/pull/20054.patch | patch -p1
@@ -246,6 +273,7 @@ find ./target/linux/ -name "config-${KERNEL_VERSION}" | xargs -I{} sh -c "echo '
 # Lets Fuck
 mkdir -p package/base-files/files/usr/bin
 cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
+#cp -rf ../PATCH/pkgs/jool/Makefile feeds/packages/net/jool/Makefile
 # 生成默认配置及缓存
 rm -rf .config
 sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-${KERNEL_VERSION}
