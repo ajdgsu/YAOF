@@ -182,6 +182,28 @@ rm -rf ./feeds/packages/lang/golang
 cp -rf ../lede_pkg_ma/lang/golang ./feeds/packages/lang/golang
 # rust
 wget https://github.com/rust-lang/rust/commit/e8d97f0.patch -O feeds/packages/lang/rust/patches/e8d97f0.patch
+
+# 全局 Rust 编译优化参数（rust-package.mk 体系）
+RUST_VALUES_FILE="feeds/packages/lang/rust/rust-values.mk"
+if [ -f "${RUST_VALUES_FILE}" ]; then
+	# 首次注入：新增全局 codegen 变量块
+	if ! grep -q '^RUSTC_GLOBAL_CODEGEN_FLAGS:=-C lto=true -C opt-level=3$' "${RUST_VALUES_FILE}"; then
+		sed -i '/^CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS)$/i \
+# Global rustc codegen tuning for Rust packages using rust-package.mk.\
+RUSTC_GLOBAL_CODEGEN_FLAGS:=-C lto=true -C opt-level=3\
+ifeq ($(ARCH),x86_64)\
+  RUSTC_GLOBAL_CODEGEN_FLAGS+=-C target-cpu=znver4\
+endif\
+' "${RUST_VALUES_FILE}"
+	fi
+
+	# 保证 CARGO_RUSTFLAGS 引用全局变量（重复执行可收敛）
+	sed -i 's|^CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS).*|CARGO_RUSTFLAGS+=-Ctarget-feature=-crt-static $(RUSTC_LDFLAGS) $(RUSTC_GLOBAL_CODEGEN_FLAGS)|' "${RUST_VALUES_FILE}"
+
+	# 显式对齐 release profile 优化等级
+	sed -i 's|^CARGO_PROFILE_RELEASE_OPT_LEVEL=.*|CARGO_PROFILE_RELEASE_OPT_LEVEL=3|' "${RUST_VALUES_FILE}"
+fi
+
 # mount cgroupv2
 pushd feeds/packages
 patch -p1 <../../../PATCH/pkgs/cgroupfs-mount/0001-fix-cgroupfs-mount.patch
