@@ -68,8 +68,8 @@ clone_repo $docker_lib_repo master docker_lib &
 
 clone_repo $qosmate main qosmate &
 clone_repo $luci_app_qosmate main luci-app-qosmate &
-clone_repo $lucky main lucky
-clone_repo $tcp_brutal master tcp_brutal
+clone_repo $lucky main lucky &
+clone_repo $tcp_brutal master tcp_brutal &
 # 等待所有后台任务完成
 wait
 
