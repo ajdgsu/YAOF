@@ -20,8 +20,25 @@ echo "src-git tcp_brutal https://github.com/haruue-net/openwrt-tcp-brutal.git;ma
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
-#faster squashfs
-#sed -i 's,-nopad -noappend -root-owned,-nopad -noappend -root-owned -comp xz -Xe -Xbcj arm -Xpreset 0 -Xstrategy default\,filtered\,huffman_only\,run_length_encoded\,fixed,g' include/image-commands.mk
+
+# 定义预期的内核版本
+SUPPORTED_KERNEL="6.12"
+
+current_version=$(sed -n 's/^KERNEL_PATCHVER:=//p' ./target/linux/rockchip/Makefile) # 如 6.12
+if [ -z "${current_version}" ]; then
+    echo "Error: Failed to extract KERNEL_PATCHVER from ./target/linux/rockchip/Makefile"
+    exit 1
+fi
+if [[ "${SUPPORTED_KERNEL}" != "${current_version}" ]]; then
+    echo "##########
+      错误：
+      编译的内核版本为 ${current_version} ，
+      预期的版本为 ${SUPPORTED_KERNEL}
+    ##########"
+    exit 1
+fi
+export KERNEL_VERSION="${SUPPORTED_KERNEL}"
+echo "KERNEL_VERSION=${SUPPORTED_KERNEL}" | tee -a "$GITHUB_ENV" 
 # 移除 SNAPSHOT 标签
 sed -i 's,-SNAPSHOT,,g' include/version.mk
 sed -i 's,-SNAPSHOT,,g' package/base-files/image-config.in
@@ -52,19 +69,12 @@ rm -rf ./package/network/config/firewall4
 cp -rf ../openwrt_ma/package/network/config/firewall4 ./package/network/config/firewall4
 
 ### 必要的 Patches ###
-# TCP optimizations
-cp -rf ../PATCH/kernel/6.7_Boost_For_Single_TCP_Flow/* ./target/linux/generic/backport-6.6/
-cp -rf ../PATCH/kernel/6.8_Boost_TCP_Performance_For_Many_Concurrent_Connections-bp_but_put_in_hack/* ./target/linux/generic/hack-6.6/
-cp -rf ../PATCH/kernel/6.8_Better_data_locality_in_networking_fast_paths-bp_but_put_in_hack/* ./target/linux/generic/hack-6.6/
-# UDP optimizations
-cp -rf ../PATCH/kernel/6.7_FQ_packet_scheduling/* ./target/linux/generic/backport-6.6/
 # Patch arm64 型号名称
-cp -rf ../PATCH/kernel/arm/* ./target/linux/generic/hack-6.6/
+cp -rf ../PATCH/kernel/arm/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 # BBRv3
-cp -rf ../PATCH/kernel/bbr3/* ./target/linux/generic/backport-6.6/
+cp -rf ../PATCH/kernel/bbr3/* ./target/linux/generic/backport-${KERNEL_VERSION}/
 # LRNG
-cp -rf ../PATCH/kernel/lrng/* ./target/linux/generic/hack-6.6/
-#cp -rf ../PATCH/kernel/0001-prjc.patch ./target/linux/generic/backport-6.6/
+cp -rf ../PATCH/kernel/lrng/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 echo '
 # CONFIG_RANDOM_DEFAULT_IMPL is not set
 CONFIG_LRNG=y
@@ -75,23 +85,23 @@ CONFIG_LRNG_CPU=y
 # CONFIG_LRNG_SCHED is not set
 CONFIG_LRNG_SELFTEST=y
 # CONFIG_LRNG_SELFTEST_PANIC is not set
-' >>./target/linux/generic/config-6.6
+' >>./target/linux/generic/config-${KERNEL_VERSION}
+# NETKIT
+echo '
+CONFIG_NETKIT=y
+' >>./target/linux/generic/config-${KERNEL_VERSION}
 # wg
-cp -rf ../PATCH/kernel/wg/* ./target/linux/generic/hack-6.6/
+cp -rf ../PATCH/kernel/wg/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 # dont wrongly interpret first-time data
 echo "net.netfilter.nf_conntrack_tcp_max_retrans=5" >>./package/kernel/linux/files/sysctl-nf-conntrack.conf
 # OTHERS
-cp -rf ../PATCH/kernel/others/* ./target/linux/generic/pending-6.6/
-# 6.17_ppp_performance
-wget https://github.com/torvalds/linux/commit/95d0d094.patch -O target/linux/generic/pending-6.6/999-1-95d0d09.patch
-wget https://github.com/torvalds/linux/commit/1a3e9b7a.patch -O target/linux/generic/pending-6.6/999-2-1a3e9b7.patch
-wget https://github.com/torvalds/linux/commit/7eebd219.patch -O target/linux/generic/pending-6.6/999-3-7eebd21.patch
-# ppp_fix
-wget -qO - https://github.com/immortalwrt/immortalwrt/commit/9d852a0.patch | patch -p1
+cp -rf ../PATCH/kernel/others/* ./target/linux/generic/pending-${KERNEL_VERSION}/
+# luci-app-attendedsysupgrade
+sed -i '/luci-app-attendedsysupgrade/d' feeds/luci/collections/luci-nginx/Makefile
 
 ### Fullcone-NAT 部分 ###
 # bcmfullcone
-cp -rf ../PATCH/kernel/bcmfullcone/* ./target/linux/generic/hack-6.6/
+cp -rf ../PATCH/kernel/bcmfullcone/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 # set nf_conntrack_expect_max for fullcone
 wget -qO - https://github.com/openwrt/openwrt/commit/bbf39d07.patch | patch -p1
 echo "net.netfilter.nf_conntrack_helper = 1" >>./package/kernel/linux/files/sysctl-nf-conntrack.conf
@@ -111,8 +121,8 @@ popd
 
 ### Shortcut-FE 部分 ###
 # Patch Kernel 以支持 Shortcut-FE
-cp -rf ../PATCH/kernel/sfe/* ./target/linux/generic/hack-6.6/
-cp -rf ../lede/target/linux/generic/pending-6.6/613-netfilter_optional_tcp_window_check.patch ./target/linux/generic/pending-6.6/613-netfilter_optional_tcp_window_check.patch
+cp -rf ../PATCH/kernel/sfe/* ./target/linux/generic/hack-${KERNEL_VERSION}/
+cp -rf ../lede/target/linux/generic/pending-${KERNEL_VERSION}/613-netfilter_optional_tcp_window_check.patch ./target/linux/generic/pending-${KERNEL_VERSION}/613-netfilter_optional_tcp_window_check.patch
 # Patch LuCI 以增添 Shortcut-FE 开关
 pushd feeds/luci
 patch -p1 <../../../PATCH/pkgs/firewall/luci/0002-luci-app-firewall-add-shortcut-fe-option.patch
@@ -145,21 +155,11 @@ popd
 # make olddefconfig
 wget -qO - https://github.com/openwrt/openwrt/commit/c21a3570.patch | patch -p1
 # igc-fix
-cp -rf ../lede/target/linux/x86/patches-6.6/996-intel-igc-i225-i226-disable-eee.patch ./target/linux/x86/patches-6.6/996-intel-igc-i225-i226-disable-eee.patch
+cp -rf ../lede/target/linux/x86/patches-${KERNEL_VERSION}/996-intel-igc-i225-i226-disable-eee.patch ./target/linux/x86/patches-${KERNEL_VERSION}/996-intel-igc-i225-i226-disable-eee.patch
 # btf
-cp -rf ../PATCH/kernel/btf/* ./target/linux/generic/hack-6.6/
+cp -rf ../PATCH/kernel/btf/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 
 ### 获取额外的基础软件包 ###
-# 更换为 ImmortalWrt Uboot 以及 Target
-rm -rf ./target/linux/rockchip
-cp -rf ../immortalwrt_24/target/linux/rockchip ./target/linux/rockchip
-#rm -rf ./target/linux/rockchip/patches-6.6/712-phy-rockchip-naneng-combphy-add-sgmii-mac-sel.patch
-cp -rf ../PATCH/kernel/rockchip/* ./target/linux/rockchip/patches-6.6/
-#wget https://github.com/immortalwrt/immortalwrt/raw/refs/tags/v23.05.4/target/linux/rockchip/patches-5.15/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch -O target/linux/rockchip/patches-6.6/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch
-rm -rf package/boot/{rkbin,uboot-rockchip,arm-trusted-firmware-rockchip}
-cp -rf ../immortalwrt_24/package/boot/uboot-rockchip ./package/boot/uboot-rockchip
-cp -rf ../immortalwrt_24/package/boot/arm-trusted-firmware-rockchip ./package/boot/arm-trusted-firmware-rockchip
-sed -i '/REQUIRE_IMAGE_METADATA/d' target/linux/rockchip/armv8/base-files/lib/upgrade/platform.sh
 # Disable Mitigations
 sed -i 's,rootwait,rootwait mitigations=off,g' target/linux/rockchip/image/default.bootscript
 sed -i 's,@CMDLINE@ noinitrd,noinitrd mitigations=off,g' target/linux/x86/image/grub-efi.cfg
@@ -171,15 +171,26 @@ cp -rf ../OpenWrt-Add ./package/new
 rm -rf feeds/packages/net/{xray-core,v2ray-core,v2ray-geodata,sing-box,frp,microsocks,shadowsocks-libev,zerotier,daed}
 rm -rf feeds/luci/applications/{luci-app-frps,luci-app-frpc,luci-app-zerotier,luci-app-filemanager}
 rm -rf feeds/packages/utils/coremark
+sed -i 's/+@KERNEL_DEBUG_INFO_BTF/+vmlinux-btf/' ./package/new/openwrt-einat-ebpf/Makefile
+git clone https://github.com/QiuSimons/vmlinux-btf ./package/new/vmlinux-btf
 
 ### 获取额外的 LuCI 应用、主题和依赖 ###
+# RK
+sed -i '/REQUIRE_IMAGE_METADATA/d' target/linux/rockchip/armv8/base-files/lib/upgrade/platform.sh
+wget https://github.com/coolsnowwolf/lede/raw/refs/heads/master/target/linux/rockchip/patches-6.12/991-arm64-dts-rockchip-add-more-cpu-operating-points-for.patch -O target/linux/rockchip/patches-6.12/991.patch
+wget https://github.com/coolsnowwolf/lede/raw/refs/heads/master/target/linux/rockchip/patches-6.12/992-rockchip-rk3399-overclock-to-2.2-1.8-GHz.patch -O target/linux/rockchip/patches-6.12/992.patch
 # 更换 Nodejs 版本
 rm -rf ./feeds/packages/lang/node
 rm -rf ./package/new/feeds_packages_lang_node-prebuilt
 cp -rf ../OpenWrt-Add/feeds_packages_lang_node-prebuilt ./feeds/packages/lang/node
 # 更换 golang 版本
 rm -rf ./feeds/packages/lang/golang
-cp -rf ../lede_pkg_ma/lang/golang ./feeds/packages/lang/golang
+cp -rf ../openwrt_pkg_ma/lang/golang ./feeds/packages/lang/golang
+#git clone https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
+# apk
+pushd feeds/luci
+wget -qO- https://github.com/sbwml/r4s_build_script/raw/refs/heads/master/openwrt/patch/luci/applications/luci-app-package-manager/0001-luci-app-package-manager-support-installing-uploaded.patch | patch -p1
+popd
 # rust
 wget https://github.com/rust-lang/rust/commit/e8d97f0.patch -O feeds/packages/lang/rust/patches/e8d97f0.patch
 
@@ -204,9 +215,11 @@ endif\
 	sed -i 's|^CARGO_PROFILE_RELEASE_OPT_LEVEL=.*|CARGO_PROFILE_RELEASE_OPT_LEVEL=3|' "${RUST_VALUES_FILE}"
 fi
 
+wget https://github.com/rust-lang/rust/commit/cdae267.patch -O feeds/packages/lang/rust/patches/cdae267.patch
+sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 # mount cgroupv2
 pushd feeds/packages
-patch -p1 <../../../PATCH/pkgs/cgroupfs-mount/0001-fix-cgroupfs-mount.patch
+#patch -p1 <../../../PATCH/pkgs/cgroupfs-mount/0001-fix-cgroupfs-mount.patch
 popd
 mkdir -p feeds/packages/utils/cgroupfs-mount/patches
 cp -rf ../PATCH/pkgs/cgroupfs-mount/900-mount-cgroup-v2-hierarchy-to-sys-fs-cgroup-cgroup2.patch ./feeds/packages/utils/cgroupfs-mount/patches/
@@ -217,6 +230,7 @@ wget -qO - https://github.com/coolsnowwolf/lede/commit/8a4db76.patch | patch -p1
 # Boost 通用即插即用
 rm -rf ./feeds/packages/net/miniupnpd
 cp -rf ../openwrt_pkg_ma/net/miniupnpd ./feeds/packages/net/miniupnpd
+mkdir -p feeds/packages/net/miniupnpd/patches
 wget https://github.com/miniupnp/miniupnp/commit/0e8c68d.patch -O feeds/packages/net/miniupnpd/patches/0e8c68d.patch
 sed -i 's,/miniupnpd/,/,g' ./feeds/packages/net/miniupnpd/patches/0e8c68d.patch
 wget https://github.com/miniupnp/miniupnp/commit/21541fc.patch -O feeds/packages/net/miniupnpd/patches/21541fc.patch
@@ -229,7 +243,8 @@ wget https://github.com/miniupnp/miniupnp/commit/60f5705.patch -O feeds/packages
 sed -i 's,/miniupnpd/,/,g' ./feeds/packages/net/miniupnpd/patches/60f5705.patch
 wget https://github.com/miniupnp/miniupnp/commit/3f3582b.patch -O feeds/packages/net/miniupnpd/patches/3f3582b.patch
 sed -i 's,/miniupnpd/,/,g' ./feeds/packages/net/miniupnpd/patches/3f3582b.patch
-cp -rf ../PATCH/pkgs/miniupnpd/301-options-force_forwarding-support.patch ./feeds/packages/net/miniupnpd/patches/
+wget https://github.com/miniupnp/miniupnp/commit/6aefa9a.patch -O feeds/packages/net/miniupnpd/patches/6aefa9a.patch
+sed -i 's,/miniupnpd/,/,g' ./feeds/packages/net/miniupnpd/patches/6aefa9a.patch
 pushd feeds/packages
 patch -p1 <../../../PATCH/pkgs/miniupnpd/01-set-presentation_url.patch
 patch -p1 <../../../PATCH/pkgs/miniupnpd/02-force_forwarding.patch
@@ -271,12 +286,11 @@ echo > ./feeds/packages/utils/watchcat/files/watchcat.config
 #sed -i "s/enabled '0'/enabled '1'/g" feeds/packages/utils/irqbalance/files/irqbalance.config
 
 # 使用 TEO CPU 空闲调度器
-KERNEL_VERSION="6.6"
 CONFIG_CONTENT='
 CONFIG_CPU_IDLE_GOV_MENU=n
 CONFIG_CPU_IDLE_GOV_TEO=y
 '
-# 查找所有与内核 6.6 相关的配置文件并将这些配置项追加到文件末尾
+# 查找所有与内核相关的配置文件并将这些配置项追加到文件末尾
 find ./target/linux/ -name "config-${KERNEL_VERSION}" | xargs -I{} sh -c "echo '$CONFIG_CONTENT' | tee -a {} > /dev/null"
 
 ### 最后的收尾工作 ###
@@ -305,25 +319,9 @@ cp -rf ../OpenWrt-Add/fuck ./package/base-files/files/usr/bin/fuck
     patch -p1 < ../PATCH/pkgs/macremapper/100-macremapper-fix-clang-build.patch
 ###clang
 rm -rf .config
-patch -p1 < ../PATCH/kernel/clang/0005-kernel-Add-support-for-llvm-clang-compiler.patch
-patch -p1 < ../PATCH/kernel/clang/0008-meson-add-platform-variable-to-cross-compilation-fil.patch
-sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-6.6
-sed -i 's,CONFIG_LTO_NONE=y,CONFIG_LTO_CLANG_FULL=y,g' target/linux/generic/config-6.6
-sed -i 's,# CONFIG_SQUASHFS_4K_DEVBLK_SIZE is not set,CONFIG_SQUASHFS_4K_DEVBLK_SIZE=y,g' target/linux/generic/config-6.6
-sed -i 's,# CONFIG_SQUASHFS_LZ4 is not set,CONFIG_SQUASHFS_LZ4=y,g' target/linux/generic/config-6.6
-sed -i 's,# CONFIG_SQUASHFS_EMBEDDED is not set,CONFIG_SQUASHFS_EMBEDDED=y,g' target/linux/generic/config-6.6
-sed -i 's,CONFIG_SQUASHFS_XZ=y,# CONFIG_SQUASHFS_XZ is not set,g' target/linux/generic/config-6.6
-sed -i 's,CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3,CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=5,g' target/linux/generic/config-6.6
-echo "CONFIG_IOSCHED_BFQ=y" >> target/linux/generic/config-6.6
-#sed -i 's,CONFIG_CMDLINE="",CONFIG_CMDLINE="rootfs_mount_options.background_gc=on rootfs_mount_options.gc_merge rootfs_mount_options.flush_merge rootfs_mount_options.extent_cache rootfs_mount_options.data_flush rootfs_mount_options.checkpoint_merge rootfs_mount_options.compress_algorithm=lz4 rootfs_mount_options.compress_extension=* rootfs_mount_options.compress_chksum rootfs_mount_options.compress_cache rootfs_mount_options.atgc rootfs_mount_options.age_extent_cache rootfs_mount_options.lazytime rootfs_mount_options.nofail rootfs_mount_options.fsync_mode=strict",g' target/linux/generic/config-6.6
-sed -i 's,SQUASHFSCOMP := gzip,SQUASHFSCOMP := lz4 -Xhc,g' include/image.mk
-sed -i 's,xz $(LZMA_XZ_OPTIONS) $(BCJ_FILTER),lz4 -Xhc,g' include/image.mk
+sed -i 's,CONFIG_WERROR=y,# CONFIG_WERROR is not set,g' target/linux/generic/config-${KERNEL_VERSION}
 
-echo -e "\nconfig LRU_GEN\n       bool \"Multi-Gen LRU\"\n       \n       \n       help\n         A high performance LRU implementation to overcommit memory. See\n         Documentation/admin-guide/mm/multigen_lru.rst for details.\n\nconfig LRU_GEN_ENABLED\n       bool \"Enable by default\"\n       depends on LRU_GEN\n       help\n         This option enables the multi-gen LRU by default.\n\nconfig LRU_GEN_STATS\n       bool \"Full stats for debugging\"\n       depends on LRU_GEN\n       help\n         Do not enable this option unless you plan to look at historical stats\n         from evicted generations for debugging purpose.\n\n         This option has a per-memcg and per-node memory overhead.\n\nconfig LRU_GEN_WALKS_MMU\n       def_bool y\n       depends on LRU_GEN && ARCH_HAS_HW_PTE_YOUNG" >> config/Config-kernel.in
-echo "CONFIG_F2FS_FS_COMPRESSION=y" >> target/linux/rockchip/armv8/config-6.6
-echo "CONFIG_F2FS_FS_LZ4=y" >> target/linux/rockchip/armv8/config-6.6
-echo "# CONFIG_F2FS_FS_LZO is not set" >> target/linux/rockchip/armv8/config-6.6
-echo "# CONFIG_F2FS_FS_ZSTD is not set" >> target/linux/rockchip/armv8/config-6.6
-cp -rf ../PATCH/pkgs/jool/Makefile feeds/packages/net/jool/Makefile
+./scripts/feeds update -i
+./scripts/feeds install -a
 
 #exit 0
