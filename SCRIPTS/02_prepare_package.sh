@@ -76,6 +76,10 @@ CONFIG_LRNG_CPU=y
 CONFIG_LRNG_SELFTEST=y
 # CONFIG_LRNG_SELFTEST_PANIC is not set
 ' >>./target/linux/generic/config-${KERNEL_VERSION}
+# NETKIT
+echo '
+CONFIG_NETKIT=y
+' >>./target/linux/generic/config-${KERNEL_VERSION}
 # wg
 cp -rf ../PATCH/kernel/wg/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 # dont wrongly interpret first-time data
@@ -156,6 +160,8 @@ cp -rf ../OpenWrt-Add ./package/new
 rm -rf feeds/packages/net/{xray-core,v2ray-core,v2ray-geodata,sing-box,frp,microsocks,shadowsocks-libev,zerotier,daed}
 rm -rf feeds/luci/applications/{luci-app-frps,luci-app-frpc,luci-app-zerotier,luci-app-filemanager}
 rm -rf feeds/packages/utils/coremark
+sed -i 's/+@KERNEL_DEBUG_INFO_BTF/+vmlinux-btf/' ./package/new/openwrt-einat-ebpf/Makefile
+git clone https://github.com/QiuSimons/vmlinux-btf ./package/new/vmlinux-btf
 
 ### 获取额外的 LuCI 应用、主题和依赖 ###
 # RK
@@ -175,7 +181,7 @@ pushd feeds/luci
 wget -qO- https://github.com/sbwml/r4s_build_script/raw/refs/heads/master/openwrt/patch/luci/applications/luci-app-package-manager/0001-luci-app-package-manager-support-installing-uploaded.patch | patch -p1
 popd
 # rust
-wget https://github.com/rust-lang/rust/commit/e8d97f0.patch -O feeds/packages/lang/rust/patches/e8d97f0.patch
+wget https://github.com/rust-lang/rust/commit/cdae267.patch -O feeds/packages/lang/rust/patches/cdae267.patch
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 RUST_VALUES_FILE="feeds/packages/lang/rust/rust-values.mk"
 if [ -f "${RUST_VALUES_FILE}" ]; then

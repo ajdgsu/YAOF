@@ -2,7 +2,7 @@
 clear
 
 # 使用特定的优化
-sed -i 's,-mcpu=generic,-march=armv8-a+crc+crypto,g' include/target.mk
+#sed -i 's,-mcpu=generic,-march=armv8-a+crc+crypto,g' include/target.mk
 sed -i 's,kmod-r8168,kmod-r8169,g' target/linux/rockchip/image/armv8.mk
 sed -i 's/-Os/-O3 -march=znver4 -Wno-error -Wno-error=mismatched-new-delete -Wno-error=implicit-function-declaration/g' include/target.mk
 sed -i 's,define Package\/iptables\/Default,define Package\/iptables\/Default\n  CFLAGS += -O3 -march=znver4 -Wno-error -Wno-error=mismatched-new-delete -Wno-error=implicit-function-declaration,g' package/network/utils/iptables/Makefile
