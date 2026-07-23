@@ -1,5 +1,9 @@
 #!/bin/bash
-clear
+set -euo pipefail
+
+if [[ -t 1 && -n "${TERM:-}" ]]; then
+    clear
+fi
 
 ### 基础部分 ###
 # 使用 O2 级别的优化
@@ -10,6 +14,11 @@ echo "src-git tcp_brutal https://github.com/haruue-net/openwrt-tcp-brutal.git;ma
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+patch -p1 < ../PATCH/pkgs/crowdsec/001-share-uci-config.patch
+# tcp-brutal v1.0.3 still resolves to commit 204aeea3437a83599c1c1fa1b97e4425cfdfc49d,
+# but current OpenWrt archive generation produces this corrected mirror hash.
+sed -i 's/0c7f5581da3bc5726bfd36a1f4863f77ca9a2684449d4b1d416577557b3d6f92/2b666b71de07256449b3e967da63f48fdb0c1146194d8deaf7edb20a82a99811/' \
+    feeds/tcp_brutal/kernel/tcp-brutal/Makefile
 
 # 定义预期的内核版本
 SUPPORTED_KERNEL="6.12"
@@ -28,7 +37,11 @@ if [[ "${SUPPORTED_KERNEL}" != "${current_version}" ]]; then
     exit 1
 fi
 export KERNEL_VERSION="${SUPPORTED_KERNEL}"
-echo "KERNEL_VERSION=${SUPPORTED_KERNEL}" | tee -a "$GITHUB_ENV" 
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+    echo "KERNEL_VERSION=${SUPPORTED_KERNEL}" | tee -a "$GITHUB_ENV"
+else
+    echo "KERNEL_VERSION=${SUPPORTED_KERNEL}"
+fi
 # 移除 SNAPSHOT 标签
 sed -i 's,-SNAPSHOT,,g' include/version.mk
 sed -i 's,-SNAPSHOT,,g' package/base-files/image-config.in
@@ -159,6 +172,13 @@ sed -i 's,@CMDLINE@ noinitrd,noinitrd mitigations=off,g' target/linux/x86/image/
 
 ### ADD PKG 部分 ###
 cp -rf ../OpenWrt-Add ./package/new
+# OpenWrt-Add carries duplicate copies of these packages. Keep the maintained
+# openwrt_helloworld variants so Kconfig sees each package exactly once.
+rm -rf ./package/new/OpenWrt-mihomo/{mihomo-alpha,mihomo-meta}
+rm -rf ./package/new/trojan-plus
+# Symmetric CONFLICTS entries form a recursive dependency with current Kconfig.
+# One package-manager conflict declaration is sufficient for mutual exclusion.
+sed -i '/CONFLICTS:=mihomo-meta/d' ./package/new/openwrt_helloworld/mihomo-alpha/Makefile
 rm -rf feeds/packages/net/{xray-core,v2ray-core,v2ray-geodata,sing-box,frp,microsocks,shadowsocks-libev,zerotier,daed}
 rm -rf feeds/luci/applications/{luci-app-frps,luci-app-frpc,luci-app-zerotier,luci-app-filemanager}
 rm -rf feeds/packages/utils/coremark
@@ -240,6 +260,7 @@ sed -i '/boot()/,+2d' feeds/packages/net/ddns-scripts/files/etc/init.d/ddns
 # Docker 容器
 rm -rf ./feeds/luci/applications/luci-app-dockerman
 cp -rf ../dockerman/applications/luci-app-dockerman ./feeds/luci/applications/luci-app-dockerman
+sed -i 's/^PKG_VERSION:=v/PKG_VERSION:=/' ./feeds/luci/applications/luci-app-dockerman/Makefile
 sed -i '/auto_start/d' feeds/luci/applications/luci-app-dockerman/root/etc/uci-defaults/luci-app-dockerman
 # qosmate
 cp -rf ../luci-app-qosmate ./package/new
@@ -257,6 +278,7 @@ popd
 sed -i '/sysctl.d/d' feeds/packages/utils/dockerd/Makefile
 rm -rf ./feeds/luci/collections/luci-lib-docker
 cp -rf ../docker_lib/collections/luci-lib-docker ./feeds/luci/collections/luci-lib-docker
+sed -i 's/^PKG_VERSION:=v/PKG_VERSION:=/' ./feeds/luci/collections/luci-lib-docker/Makefile
 # IPv6 兼容助手
 patch -p1 <../PATCH/pkgs/odhcp6c/1002-odhcp6c-support-dhcpv6-hotplug.patch
 # ODHCPD

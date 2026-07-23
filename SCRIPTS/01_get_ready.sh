@@ -1,19 +1,31 @@
 #!/bin/bash
 
+set -Eeuo pipefail
+
 # 这个脚本的作用是从不同的仓库中克隆openwrt相关的代码，并进行一些处理
 
 # 定义一个函数，用来克隆指定的仓库和分支
 clone_repo() {
   # 参数1是仓库地址，参数2是分支名，参数3是目标目录
-  repo_url=$1
-  branch_name=$2
-  target_dir=$3
+  local repo_url="$1"
+  local branch_name="$2"
+  local target_dir="$3"
   # 克隆仓库到目标目录，并指定分支名和深度为1
-  git clone -b $branch_name --depth 1 $repo_url $target_dir
+  git clone -b "$branch_name" --depth 1 "$repo_url" "$target_dir"
 }
 
+source "./SCRIPTS/00_resolve_openwrt_release.sh"
+
 # 定义一些变量，存储仓库地址和分支名
-latest_release="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9][5-9]/p' | sed -n 1p | sed 's/.tar.gz//g')"
+if [[ -n "${OPENWRT_RELEASE:-}" ]]; then
+  if [[ ! "$OPENWRT_RELEASE" =~ ^v25\.12\.[0-9]+$ ]]; then
+    echo "invalid OPENWRT_RELEASE: $OPENWRT_RELEASE" >&2
+    exit 1
+  fi
+  latest_release="$OPENWRT_RELEASE"
+else
+  latest_release="$(resolve_openwrt_release)"
+fi
 immortalwrt_repo="https://github.com/immortalwrt/immortalwrt.git"
 immortalwrt_pkg_repo="https://github.com/immortalwrt/packages.git"
 immortalwrt_luci_repo="https://github.com/immortalwrt/luci.git"
@@ -51,27 +63,58 @@ luci_app_qosmate="https://github.com/hudra0/luci-app-qosmate.git"
 tcp_brutal="https://github.com/haruue-net/openwrt-tcp-brutal.git"
 lucky="https://github.com/sirpdboy/luci-app-lucky.git"
 
+# 检查所有目标目录，避免并行克隆覆盖已有内容
+clone_destinations=(
+  openwrt openwrt_snap immortalwrt_24 immortalwrt_23 lede lede_pkg_ma
+  openwrt_ma openwrt_pkg_ma OpenWrt-Add dockerman docker_lib qosmate
+  luci-app-qosmate lucky tcp_brutal
+)
+for clone_destination in "${clone_destinations[@]}"; do
+  if [[ -e "$clone_destination" ]]; then
+    echo "clone destination already exists: $clone_destination" >&2
+    exit 1
+  fi
+done
+
 # 开始克隆仓库，并行执行
-clone_repo $openwrt_repo $latest_release openwrt &
+clone_pids=()
+clone_names=()
+start_clone() {
+  clone_repo "$1" "$2" "$3" &
+  clone_pids+=("$!")
+  clone_names+=("$3")
+}
+
+start_clone "$openwrt_repo" "$latest_release" openwrt
 #clone_repo $openwrt_repo openwrt-25.12 openwrt &
-clone_repo $openwrt_repo openwrt-25.12 openwrt_snap &
-clone_repo $immortalwrt_repo openwrt-24.10 immortalwrt_24 &
-clone_repo $immortalwrt_repo openwrt-23.05 immortalwrt_23 &
+start_clone "$openwrt_repo" openwrt-25.12 openwrt_snap
+start_clone "$immortalwrt_repo" openwrt-24.10 immortalwrt_24
+start_clone "$immortalwrt_repo" openwrt-23.05 immortalwrt_23
 
-clone_repo $lede_repo master lede &
-clone_repo $lede_pkg_repo master lede_pkg_ma &
-clone_repo $openwrt_repo main openwrt_ma &
-clone_repo $openwrt_pkg_repo master openwrt_pkg_ma &
-clone_repo $openwrt_add_repo master OpenWrt-Add &
-clone_repo $dockerman_repo master dockerman &
-clone_repo $docker_lib_repo master docker_lib &
+start_clone "$lede_repo" master lede
+start_clone "$lede_pkg_repo" master lede_pkg_ma
+start_clone "$openwrt_repo" main openwrt_ma
+start_clone "$openwrt_pkg_repo" master openwrt_pkg_ma
+start_clone "$openwrt_add_repo" master OpenWrt-Add
+start_clone "$dockerman_repo" master dockerman
+start_clone "$docker_lib_repo" master docker_lib
 
-clone_repo $qosmate main qosmate &
-clone_repo $luci_app_qosmate main luci-app-qosmate &
-clone_repo $lucky main lucky &
-clone_repo $tcp_brutal master tcp_brutal &
-# 等待所有后台任务完成
-wait
+start_clone "$qosmate" main qosmate
+start_clone "$luci_app_qosmate" main luci-app-qosmate
+start_clone "$lucky" main lucky
+start_clone "$tcp_brutal" master tcp_brutal
+
+# 等待所有后台任务完成，并在任何失败后停止后续处理
+clone_failed=0
+for clone_index in "${!clone_pids[@]}"; do
+  if ! wait "${clone_pids[$clone_index]}"; then
+    echo "clone failed: ${clone_names[$clone_index]}" >&2
+    clone_failed=1
+  fi
+done
+if (( clone_failed != 0 )); then
+  exit 1
+fi
 
 # 进行一些处理
 cp -rf openwrt_snap/include/package-pack.mk /tmp/package-pack.mk.bak

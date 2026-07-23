@@ -1,0 +1,21 @@
+.codegraph/
+.cxd/
+.cxd-work/
+.gstack/
+
+# Source trees materialized by SCRIPTS/01_get_ready.sh.
+/OpenWrt-Add/
+/docker_lib/
+/dockerman/
+/immortalwrt_23/
+/immortalwrt_24/
+/lede/
+/lede_pkg_ma/
+/luci-app-qosmate/
+/lucky/
+/openwrt/
+/openwrt_ma/
+/openwrt_pkg_ma/
+/openwrt_snap/
+/qosmate/
+/tcp_brutal/

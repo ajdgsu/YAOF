@@ -1,0 +1,35 @@
+services:
+  yaof:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cap_add:
+      - KILL
+      - NET_ADMIN
+      - SETGID
+      - SETUID
+    cap_drop:
+      - ALL
+    init: true
+    privileged: false
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    tmpfs:
+      - /run:mode=0755,uid=0,gid=0
+      - /tmp:mode=1777,uid=0,gid=0
+    volumes:
+      - type: bind
+        source: /opt/source/YAOF
+        target: /opt/source/YAOF
+      - type: volume
+        source: yaof-home
+        target: /home/builder
+    working_dir: /opt/source/YAOF
+
+volumes:
+  yaof-home:

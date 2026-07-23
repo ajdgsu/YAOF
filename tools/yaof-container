@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly compose_file="$repo_root/compose.yaml"
+readonly service=yaof
+compose=(docker compose --project-directory "$repo_root" --file "$compose_file")
+
+usage() {
+    cat <<'EOF'
+Usage: tools/yaof-container {up|down|build|status|shell|exec} [command ...]
+EOF
+}
+
+wait_ready() {
+    local container_id health deadline
+
+    container_id="$("${compose[@]}" ps -q "$service")"
+    if [[ -z "$container_id" ]]; then
+        echo "Container is not running" >&2
+        return 1
+    fi
+
+    deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$container_id")"
+        case "$health" in
+            healthy)
+                return 0
+                ;;
+            unhealthy)
+                echo "Container network setup failed:" >&2
+                "${compose[@]}" logs --tail=100 "$service" >&2
+                return 1
+                ;;
+        esac
+        sleep 1
+    done
+
+    echo "Timed out waiting for container network readiness" >&2
+    "${compose[@]}" logs --tail=100 "$service" >&2
+    return 1
+}
+
+ensure_ready() {
+    "${compose[@]}" up -d "$service"
+    wait_ready
+}
+
+case "${1:-}" in
+    up)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        ensure_ready
+        ;;
+    down)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        "${compose[@]}" down
+        ;;
+    build)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        "${compose[@]}" build "$service"
+        ;;
+    status)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        "${compose[@]}" ps
+        container_id="$("${compose[@]}" ps -q "$service")"
+        if [[ -n "$container_id" ]]; then
+            docker inspect --format 'health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id"
+        fi
+        ;;
+    shell)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        ensure_ready
+        exec "${compose[@]}" exec --user 1000:1000 "$service" bash -l
+        ;;
+    exec)
+        shift || true
+        if [[ "${1:-}" == "--" ]]; then
+            shift
+        fi
+        [[ $# -gt 0 ]] || { usage >&2; exit 2; }
+        ensure_ready
+        exec "${compose[@]}" exec --user 1000:1000 -T "$service" "$@"
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

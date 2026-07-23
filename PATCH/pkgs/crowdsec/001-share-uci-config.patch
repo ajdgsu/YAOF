@@ -1,0 +1,33 @@
+--- a/feeds/packages/net/crowdsec/files/crowdsec.config
++++ b/feeds/packages/net/crowdsec/files/crowdsec.config
+@@ -4,0 +5,14 @@
++config bouncer
++	option enabled '0'
++	option ipv4 '1'
++	option ipv6 '1'
++	option api_url 'http://localhost:8080/'
++	option api_key ''
++	option update_frequency '10s'
++	option deny_action 'drop'
++	option deny_log '0'
++	option log_prefix 'crowdsec: '
++	option log_level 'info'
++	option filter_input '1'
++	option filter_forward '1'
++	list interface 'eth1'
+--- a/feeds/packages/net/crowdsec-firewall-bouncer/Makefile
++++ b/feeds/packages/net/crowdsec-firewall-bouncer/Makefile
+@@ -50 +50 @@
+-  DEPENDS:=$(GO_ARCH_DEPENDS)
++  DEPENDS:=+crowdsec $(GO_ARCH_DEPENDS)
+@@ -84,4 +84,0 @@
+-
+-	$(INSTALL_DIR) $(1)/etc/config
+-	$(INSTALL_CONF) ./files/crowdsec.config $(1)/etc/config/crowdsec
+-
+@@ -91,5 +87,0 @@
+-
+-define Package/crowdsec-firewall-bouncer/conffiles
+-/etc/config/crowdsec
+-endef
+-

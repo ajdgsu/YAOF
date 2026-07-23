@@ -182,6 +182,10 @@ jobs:
           sudo chown -R runner:runner /home/runner/work/YAOF
           cp -r ./SCRIPTS/${{ matrix.script_dir }}/. ./SCRIPTS/
           cp -r ./SCRIPTS/. ./
+          OPENWRT_RELEASE="$(/bin/bash ./00_resolve_openwrt_release.sh)"
+          export OPENWRT_RELEASE
+          echo "OPENWRT_RELEASE=$OPENWRT_RELEASE" >> "$GITHUB_ENV"
+          echo "latest_release=${OPENWRT_RELEASE#v}" >> "$GITHUB_ENV"
           /bin/bash 01_get_ready.sh
 
       - name: Prepare Package
@@ -225,8 +229,6 @@ jobs:
             TARGET_DEVICE_ARCH="$TARGET_DEVICE_ARCH-${{ matrix.arch_suffix }}"
           fi
           echo "TARGET_DEVICE_ARCH=$TARGET_DEVICE_ARCH" >> $GITHUB_ENV
-          latest_release="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9][5-9]/p' | sed -n 1p | sed 's/.tar.gz//g' | sed 's/v//g')"
-          echo "latest_release=${latest_release}" >> $GITHUB_ENV
 
           echo "Package folder ${{ env.openwrt_source_name }}"
           cd ..
@@ -267,18 +269,8 @@ jobs:
       - name: Compile Openwrt
         if: inputs.build_firmware
         working-directory: ${{ github.workspace }}/openwrt
-        id: compileopenwrt
-        continue-on-error: true
         run: |
-          IGNORE_ERRORS=1 make -j$(($(nproc) + 1))
-          echo $?
-      - name: If Error
-        if: steps.compileopenwrt.outcome == 'failure'
-        working-directory: ${{ github.workspace }}/openwrt
-        run: |
-          cat ./.config
-          echo '================================================================'
-          make -j1 V=s
+          make -j$(($(nproc) + 1))
 
       - name: Organize files
         if: inputs.build_firmware
