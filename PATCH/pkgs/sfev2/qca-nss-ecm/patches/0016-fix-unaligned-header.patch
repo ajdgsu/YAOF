@@ -77,9 +77,8 @@
  #include <linux/inet.h>
 --- a/ecm_db/ecm_db.c
 +++ b/ecm_db/ecm_db.c
-@@ -23,7 +23,7 @@
+@@ -23,6 +23,6 @@
  #include <net/tcp.h>
- #include <net/ip_fib.h>
  #include <net/fib_notifier.h>
 -#include <asm/unaligned.h>
 +#include <linux/unaligned.h>

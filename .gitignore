@@ -19,3 +19,24 @@
 /openwrt_snap/
 /qosmate/
 /tcp_brutal/
+
+# Transient build, recovery, and validation workspaces.
+/.yaof-*
+/vmlinux-btf/
+/=
+
+# Copies materialized by the build workflow; canonical files live in SCRIPTS/.
+/00_resolve_openwrt_release.sh
+/01_get_ready.sh
+/02_prepare_package.sh
+/02_target_only.sh
+/03_convert_translation.sh
+/04_remove_upx.sh
+/05_create_acl_for_luci.sh
+/06_cleaning.sh
+/07_fw3.sh
+/08_fix_permissions.sh
+/R2S/
+/R4S/
+/X86/
+/SCRIPTS/02_target_only.sh

@@ -16,7 +16,7 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  root/usr/share/firewall4/templates/ruleset.uc | 16 +++-
  .../firewall4/templates/zone-fullcone.uc      |  4 +
  root/usr/share/ucode/fw4.uc                   | 76 ++++++++++++++++++-
- 4 files changed, 96 insertions(+), 3 deletions(-)
+ 4 files changed, 97 insertions(+), 3 deletions(-)
  create mode 100644 root/usr/share/firewall4/templates/zone-fullcone.uc
 
 --- a/root/etc/config/firewall
@@ -44,10 +44,10 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  {%   for (let redirect in fw4.redirects(`dstnat_${zone.name}`)): %}
  		{%+ include("redirect.uc", { fw4, zone, redirect }) %}
  {%   endfor %}
-+{%   if (zone.fullcone4): %}
++{%   if (zone.fullcone4 == 1): %}
 +		{%+ include("zone-fullcone.uc", { fw4, zone, family: 4, direction: "dstnat" }) %}
 +{%   endif %}
-+{%   if (zone.fullcone6): %}
++{%   if (zone.fullcone6 == 1): %}
 +		{%+ include("zone-fullcone.uc", { fw4, zone, family: 6, direction: "dstnat" }) %}
 +{%   endif %}
  {%   fw4.includes('chain-append', `dstnat_${zone.name}`) %}
@@ -58,7 +58,7 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  		{%+ include("redirect.uc", { fw4, zone, redirect }) %}
  {%   endfor %}
 -{%   if (zone.masq): %}
-+{%   if (zone.masq && !zone.fullcone4): %}
++{%   if (zone.masq && zone.fullcone4 != 1): %}
  {%    for (let saddrs in zone.masq4_src_subnets): %}
  {%     for (let daddrs in zone.masq4_dest_subnets): %}
  		{%+ include("zone-masq.uc", { fw4, zone, family: 4, saddrs, daddrs }) %}
@@ -66,17 +66,17 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  {%    endfor %}
  {%   endif %}
 -{%   if (zone.masq6): %}
-+{%   if (zone.masq6 && !zone.fullcone6): %}
++{%   if (zone.masq6 && zone.fullcone6 != 1): %}
  {%    for (let saddrs in zone.masq6_src_subnets): %}
  {%     for (let daddrs in zone.masq6_dest_subnets): %}
  		{%+ include("zone-masq.uc", { fw4, zone, family: 6, saddrs, daddrs }) %}
  {%     endfor %}
  {%    endfor %}
  {%   endif %}
-+{%   if (zone.fullcone4): %}
++{%   if (zone.fullcone4 == 1): %}
 +		{%+ include("zone-fullcone.uc", { fw4, zone, family: 4, direction: "srcnat" }) %}
 +{%   endif %}
-+{%   if (zone.fullcone6): %}
++{%   if (zone.fullcone6 == 1): %}
 +		{%+ include("zone-fullcone.uc", { fw4, zone, family: 6, direction: "srcnat" }) %}
 +{%   endif %}
  {%   fw4.includes('chain-append', `srcnat_${zone.name}`) %}
@@ -184,8 +184,8 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  
  		delete defs.syn_flood;
  
-+		if (!nft_try_fullcone()) {
-+			delete defs.fullcone;
++		if (defs.fullcone == 1 && !nft_try_fullcone()) {
++			defs.fullcone = 0;
 +			warn("nft_try_fullcone failed, disable fullcone globally\n");
 +		}
 +
@@ -201,19 +201,20 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  
  			extra: [ "string", null, UNSUPPORTED ],
  			extra_src: [ "string", null, UNSUPPORTED ],
-@@ -2036,6 +2093,18 @@ return {
+@@ -2036,6 +2093,19 @@ return {
  			}
  		}
  
-+		if (this.state.defaults && !this.state.defaults.fullcone) {
-+			this.warn_section(data, "fullcone in defaults not enabled, ignore zone fullcone settings");
++		if (this.state.defaults && this.state.defaults.fullcone != 1) {
++			if (zone.fullcone4 == 1 || zone.fullcone6 == 1)
++				this.warn_section(data, "fullcone in defaults not enabled, ignore zone fullcone settings");
 +			zone.fullcone4 = false;
 +			zone.fullcone6 = false;
 +		}
-+		if (zone.fullcone4) {
++		if (zone.fullcone4 == 1) {
 +			this.myinfo_section(data, "IPv4 fullcone enabled for zone '" + zone.name + "'");
 +		}
-+		if (zone.fullcone6) {
++		if (zone.fullcone6 == 1) {
 +			this.myinfo_section(data, "IPv6 fullcone enabled for zone '" + zone.name + "'");
 +		}
 +
@@ -224,7 +225,7 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  		zone.related_subnets = related_subnets;
  		zone.related_physdevs = related_physdevs;
  
-+		if (zone.fullcone4 || zone.fullcone6) {
++		if (zone.fullcone4 == 1 || zone.fullcone6 == 1 || zone.brcmfullcone == 1) {
 +			zone.dflags.snat = true;
 +			zone.dflags.dnat = true;
 +		}
@@ -233,7 +234,7 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  			zone.dflags.snat = true;
  
 -		if ((zone.auto_helper && !(zone.masq || zone.masq6)) || length(zone.helper)) {
-+		if ((zone.auto_helper && !(zone.masq || zone.masq6 || zone.fullcone4 || zone.fullcone6)) || length(zone.helper)) {
++		if ((zone.auto_helper && !(zone.masq || zone.masq6 || zone.fullcone4 == 1 || zone.fullcone6 == 1)) || length(zone.helper)) {
  			zone.dflags.helper = true;
  
  			for (let helper in (length(zone.helper) ? zone.helper : this.state.helpers)) {

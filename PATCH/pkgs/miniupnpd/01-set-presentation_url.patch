@@ -6,9 +6,9 @@ index de35045..c5a14ab 100644
  }
  
  start_service() {
-+	sed -i '/presentation_url/d' /etc/config/upnpd
-+	sed -i "\/uuid/a\\\toption presentation_url 'http://$(uci -q get network.lan.ipaddr)/'" /etc/config/upnpd
-+	uci commit upnpd
++	local lan_ip
++	lan_ip="$(uci -q get network.lan.ipaddr)"
++	[ -n "$lan_ip" ] && uci set upnpd.config.presentation_url="http://${lan_ip}/"
  	config_load "upnpd"
  	config_foreach upnpd "upnpd"
  }

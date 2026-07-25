@@ -2,7 +2,7 @@ diff --git a/utils/cgroupfs-mount/files/cgroupfs-mount.init b/utils/cgroupfs-mou
 index 0d6b68d..4ae3185 100755
 --- a/utils/cgroupfs-mount/files/cgroupfs-mount.init
 +++ b/utils/cgroupfs-mount/files/cgroupfs-mount.init
-@@ -4,9 +4,17 @@ START=01
+@@ -4,9 +4,20 @@ START=01
  
  boot() {
  	# Procd mounts non-hierarchical cgroupfs so unmount first before cgroupfs-mount
@@ -10,17 +10,20 @@ index 0d6b68d..4ae3185 100755
 -		umount /sys/fs/cgroup/
 -	fi
 +	umount_cgroup() {
-+		for sys in $(awk '!/^#/ { if ($4 == 1) print $1 }' /proc/cgroups); do
-+			if mountpoint -q /sys/fs/cgroup/$sys; then
-+				umount /sys/fs/cgroup/$sys || true
++		for child in /sys/fs/cgroup/*; do
++			[ -e "$child" ] || continue
++			if mountpoint -q "$child" && ! umount "$child"; then
++				echo "failed to unmount cgroup child: $child" >&2
++				return 1
 +			fi
 +		done
-+		if mountpoint -q /sys/fs/cgroup; then
-+			umount /sys/fs/cgroup || true
++		if mountpoint -q /sys/fs/cgroup && ! umount /sys/fs/cgroup; then
++			echo "failed to unmount cgroup root" >&2
++			return 1
 +		fi
 +	}
  
 -	cgroupfs-mount
-+	umount_cgroup
++	umount_cgroup || return 1
 +	cgroupfs-mount
  }

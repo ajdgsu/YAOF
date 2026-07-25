@@ -7,8 +7,10 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-nss-ecm.git
-PKG_SOURCE_VERSION:=NHSS.QSDK.14.0.r1-00011-O
-PKG_MIRROR_HASH:=skip
+PKG_SOURCE_VERSION:=52c28bc67b15c1523ad426f379d164f0f629f6dd
+PKG_SOURCE_DATE:=2026-01-27
+PKG_MIRROR_HASH:=b708efa75ebcbb6ed3d9b2c5ed0ab6be68868fd33884f70df895edd5e8351a17
+PKG_BUILD_DEPENDS:=qca-nss-sfe
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -31,8 +33,6 @@ define KernelPackage/qca-nss-ecm/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/sfe-ecm.init $(1)/etc/init.d/sfe-ecm
 endef
-
-PKG_BUILD_DEPENDS:=qca-nss-sfe
 
 # 强制配置：SFE 模式，禁用硬件加速，通用 SoC
 ECM_MAKE_OPTS:= \

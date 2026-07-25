@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/ecm_compat.h
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,190 @@
 +#ifndef __ECM_COMPAT_H
 +#define __ECM_COMPAT_H
 +
@@ -49,40 +49,58 @@
 +#endif
 +
 +/* Bridge Compat */
-+static inline struct net_device *ecm_compat_br_port_dev_get(struct net_device *br, struct sk_buff *skb)
++static inline struct net_device *ecm_compat_br_port_dev_get(struct net_device *br,
++                                                            const unsigned char *addr,
++                                                            struct sk_buff *skb)
 +{
-+       struct net_device *dev;
-+       
-+       if (!skb) return NULL;
++       struct net_device *dev = NULL;
 +
-+       /* Try to get input device from skb->skb_iif (Standard Linux behavior) */
-+       rcu_read_lock();
-+       dev = dev_get_by_index_rcu(dev_net(br), skb->skb_iif);
-+       
-+       if (dev) {
-+               /* Verify if this device is a port of the bridge 
-+                * Use netdev_master_upper_dev_get_rcu to replace dev->master check
-+                */
-+               if (netdev_master_upper_dev_get_rcu(dev) != br) {
-+                       dev = NULL;
++       if (!br)
++               return NULL;
++
++       if (skb) {
++               rcu_read_lock();
++               dev = dev_get_by_index_rcu(dev_net(br), skb->skb_iif);
++               if (dev && netdev_master_upper_dev_get_rcu(dev) == br) {
++                       /* br_port_dev_get() returns a held reference. */
++                       dev_hold(dev);
++                       rcu_read_unlock();
++                       return dev;
 +               }
++               rcu_read_unlock();
 +       }
++
++       if (!addr)
++               return NULL;
++
++       rcu_read_lock();
++       dev = br_fdb_find_port_rcu(br, addr, 0);
++       if (dev)
++               dev_hold(dev);
 +       rcu_read_unlock();
 +
 +       return dev;
 +}
 +
-+#define br_port_dev_get(br, addr, cookie, len) ecm_compat_br_port_dev_get(br, skb)
++#define br_port_dev_get(br, addr, skb, cookie) ecm_compat_br_port_dev_get(br, addr, skb)
 +
-+/* 
++/*
 + * br_fdb_has_entry replacement:
-+ * Use the exported br_fdb_find_port (GPL) to check if the bridge knows the destination.
++ * Use the exported RCU lookup to check if the bridge knows the destination.
 + * Returns true only if a valid forwarding port is found.
 + */
 +static inline bool ecm_compat_br_fdb_has_entry(struct net_device *br_dev, const unsigned char *addr, __u16 vid)
 +{
-+       /* br_fdb_find_port returns the port net_device if found and state is FORWARDING */
-+       return !!br_fdb_find_port(br_dev, addr, vid);
++       bool found;
++
++       if (!br_dev || !addr)
++               return false;
++
++       rcu_read_lock();
++       found = !!br_fdb_find_port_rcu(br_dev, addr, vid);
++       rcu_read_unlock();
++
++       return found;
 +}
 +#define br_fdb_has_entry(dev, addr, vid) ecm_compat_br_fdb_has_entry(dev, addr, vid)
 +
@@ -156,7 +174,7 @@
 +};
 +
 +/* UDP Timeouts Compat */
-+/* 
++/*
 + * udp_get_timeouts() is a dd-wrt/QCA kernel export not present in vanilla.
 + * Use nf_udp_pernet() (available in vanilla 6.12 via nf_conntrack_l4proto.h)
 + * to dynamically read the actual per-net UDP timeouts, including any

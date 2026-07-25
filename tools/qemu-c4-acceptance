@@ -1,0 +1,747 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE_GZ="${1:-${REPO_ROOT}/openwrt/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined.img.gz}"
+WAN_PARENT="${WAN_PARENT:-enp10s0}"
+if [[ -n "${RUN_DIR:-}" ]]; then
+	[[ ! -e "${RUN_DIR}" ]] || {
+		printf 'ERROR: RUN_DIR must not already exist: %s\n' "${RUN_DIR}" >&2
+		exit 1
+	}
+	(umask 077 && mkdir -m 0700 -- "${RUN_DIR}")
+else
+	RUN_DIR="$(mktemp -d /tmp/yaof-c4-qemu.XXXXXXXX)"
+fi
+
+WAN_MVT="yc4-wan"
+LAN_BR="yc4-br"
+LAN_TAP="yc4-tap"
+CLIENT_NS="yc4-client"
+CLIENT_HOST="yc4-chost"
+CLIENT_DEV="yc4-client0"
+WAN_NS="yc4-wanpeer"
+WAN_PEER="yc4-peer"
+
+LAN_MAC="52:54:00:c4:00:01"
+WAN_GUEST_MAC="52:54:00:c4:00:03"
+WAN_MVT_MAC="${WAN_GUEST_MAC}"
+WAN_PEER_MAC="52:54:00:c4:00:04"
+
+IMAGE="${RUN_DIR}/openwrt.img"
+SERIAL_SOCKET="${RUN_DIR}/serial.sock"
+CONSOLE="${RUN_DIR}/console"
+SERIAL_LOG="${RUN_DIR}/serial.log"
+RESULTS_LOG="${RUN_DIR}/results.log"
+QEMU_PIDFILE="${RUN_DIR}/qemu.pid"
+QEMU_FALLBACK_PIDFILE="${RUN_DIR}/qemu-fallback.pid"
+SOCAT_PIDFILE="${RUN_DIR}/socat.pid"
+CONSOLE_READER_PIDFILE="${RUN_DIR}/console-reader.pid"
+HOST_PING_PIDFILE="${RUN_DIR}/host-ping.pid"
+HOST_PING_LOG="${RUN_DIR}/host-ping.log"
+
+CLEANED=0
+RESOURCES_ARMED=0
+WAN_PEER_IN_NS=0
+HOST_PING_STARTED=0
+HOST_GATEWAY=""
+PID_RUN_TOKEN="YAOF_C4_RUN_DIR=${RUN_DIR}"
+LOCK_FD=""
+PENDING_SIGNAL=0
+
+log() {
+	printf '[%s] %s\n' "$(date '+%F %T')" "$*" | tee -a "${RESULTS_LOG}"
+}
+
+die() {
+	log "ERROR: $*"
+	exit 1
+}
+
+need() {
+	command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
+}
+
+acquire_run_lock() {
+	exec {LOCK_FD}<"${BASH_SOURCE[0]}" || die "cannot open acceptance script for locking"
+	flock -n "${LOCK_FD}" || die "another C4 QEMU acceptance run is active"
+}
+
+begin_spawn_guard() {
+	PENDING_SIGNAL=0
+	trap 'PENDING_SIGNAL=130' INT
+	trap 'PENDING_SIGNAL=143' TERM
+}
+
+end_spawn_guard() {
+	local pending_signal="${PENDING_SIGNAL}"
+
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	PENDING_SIGNAL=0
+	((pending_signal == 0)) || exit "${pending_signal}"
+}
+
+wait_for_file() {
+	local path="$1"
+	local timeout="$2"
+	local i
+
+	for ((i = 0; i < timeout; i++)); do
+		[[ -e "${path}" ]] && return 0
+		sleep 1
+	done
+	return 1
+}
+
+wait_for_log() {
+	local pattern="$1"
+	local timeout="$2"
+	local i
+	local pid
+
+	for ((i = 0; i < timeout; i++)); do
+		grep -q -- "${pattern}" "${SERIAL_LOG}" 2>/dev/null && return 0
+		if [[ -f "${QEMU_PIDFILE}" ]]; then
+			pid="$(sudo cat "${QEMU_PIDFILE}" 2>/dev/null || true)"
+			[[ -n "${pid}" ]] || return 1
+			qemu_pid_is_ours "${pid}" || return 1
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+send_console() {
+	printf '%s\r\n' "$1" > "${CONSOLE}"
+}
+
+snapshot_host() {
+	local prefix="$1"
+	local failed=0
+
+	ip -brief link show "${WAN_PARENT}" > "${RUN_DIR}/${prefix}-wan-link.txt" || failed=1
+	ip -brief address show "${WAN_PARENT}" > "${RUN_DIR}/${prefix}-wan-address.txt" || failed=1
+	ip -4 route show table main > "${RUN_DIR}/${prefix}-routes.txt" || failed=1
+	return "${failed}"
+}
+
+qemu_pid_is_ours() {
+	local pid="$1"
+	local cmdline
+	local environ
+	local executable
+
+	[[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+	sudo kill -0 "${pid}" 2>/dev/null || return 1
+	cmdline="$(sudo cat "/proc/${pid}/cmdline" 2>/dev/null | tr '\0' ' ')" || return 1
+	environ="$(sudo cat "/proc/${pid}/environ" 2>/dev/null | tr '\0' '\n')" || return 1
+	executable="$(sudo readlink "/proc/${pid}/exe" 2>/dev/null)" || return 1
+	case "${executable##*/}" in
+		qemu-system-x86_64)
+			[[ "${cmdline}" == *'-name yaof-c4-acceptance'* ]]
+			;;
+		bash)
+			[[ "${cmdline}" == *'exec qemu-system-x86_64'* &&
+			   "${cmdline}" == *'-name yaof-c4-acceptance'* ]]
+			;;
+		*)
+			return 1
+			;;
+	esac
+	printf '%s\n' "${environ}" | grep -Fxq "IMAGE=${IMAGE}" &&
+		printf '%s\n' "${environ}" | grep -Fxq "${PID_RUN_TOKEN}"
+}
+
+host_ping_pid_is_ours() {
+	local pid="$1"
+	local cmdline
+	local environ
+	local executable
+
+	[[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+	kill -0 "${pid}" 2>/dev/null || return 1
+	cmdline="$(cat "/proc/${pid}/cmdline" 2>/dev/null | tr '\0' ' ')" || return 1
+	environ="$(cat "/proc/${pid}/environ" 2>/dev/null | tr '\0' '\n')" || return 1
+	executable="$(readlink "/proc/${pid}/exe" 2>/dev/null)" || return 1
+	[[ "${executable##*/}" == ping && "${cmdline}" == *"${HOST_GATEWAY}"* ]] &&
+		printf '%s\n' "${environ}" | grep -Fxq "${PID_RUN_TOKEN}"
+}
+
+local_pid_is_ours() {
+	local pid="$1"
+	local command="$2"
+	local token="$3"
+	local cmdline
+	local environ
+	local executable
+
+	[[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+	kill -0 "${pid}" 2>/dev/null || return 1
+	cmdline="$(cat "/proc/${pid}/cmdline" 2>/dev/null | tr '\0' ' ')" || return 1
+	environ="$(cat "/proc/${pid}/environ" 2>/dev/null | tr '\0' '\n')" || return 1
+	executable="$(readlink "/proc/${pid}/exe" 2>/dev/null)" || return 1
+	[[ "${executable##*/}" == "${command}" && "${cmdline}" == *"${token}"* ]] &&
+		printf '%s\n' "${environ}" | grep -Fxq "${PID_RUN_TOKEN}"
+}
+
+stop_host_ping() {
+	local pid
+
+	((HOST_PING_STARTED == 1)) || return 0
+	pid="$(<"${HOST_PING_PIDFILE}")"
+	if ! host_ping_pid_is_ours "${pid}"; then
+		log "ERROR: host continuity monitor stopped before cleanup completed: ${pid}"
+		HOST_PING_STARTED=0
+		return 1
+	fi
+	kill -INT "${pid}" 2>/dev/null
+	wait "${pid}" 2>/dev/null
+	HOST_PING_STARTED=0
+	return 0
+}
+
+reserved_resources_absent() {
+	local failed=0
+	local link ns pid pidfile state
+	local monitor_state="${1:-absent}"
+
+	if [[ -f "${HOST_PING_PIDFILE}" ]]; then
+		pid="$(<"${HOST_PING_PIDFILE}")"
+		if [[ "${monitor_state}" == running ]]; then
+			if ! host_ping_pid_is_ours "${pid}"; then
+				log "ERROR: host continuity monitor is not running during cleanup: ${pid}"
+				failed=1
+			fi
+		elif host_ping_pid_is_ours "${pid}"; then
+			log "ERROR: host continuity monitor remains after cleanup: ${pid}"
+			failed=1
+		fi
+	elif [[ "${monitor_state}" == running ]]; then
+		log "ERROR: host continuity monitor pidfile is missing during cleanup"
+		failed=1
+	fi
+	if [[ -f "${SOCAT_PIDFILE}" ]]; then
+		pid="$(<"${SOCAT_PIDFILE}")"
+		if local_pid_is_ours "${pid}" socat "${SERIAL_SOCKET}"; then
+			log "ERROR: socat process remains after cleanup: ${pid}"
+			failed=1
+		fi
+	fi
+	if [[ -f "${CONSOLE_READER_PIDFILE}" ]]; then
+		pid="$(<"${CONSOLE_READER_PIDFILE}")"
+		if local_pid_is_ours "${pid}" cat "${CONSOLE}"; then
+			log "ERROR: console reader remains after cleanup: ${pid}"
+			failed=1
+		fi
+	fi
+	for pidfile in "${QEMU_PIDFILE}" "${QEMU_FALLBACK_PIDFILE}"; do
+		[[ -f "${pidfile}" ]] || continue
+		pid="$(sudo cat "${pidfile}" 2>/dev/null || true)"
+		if [[ -n "${pid}" ]] && qemu_pid_is_ours "${pid}"; then
+			log "ERROR: QEMU process remains after cleanup: ${pid}"
+			failed=1
+		fi
+	done
+	if ((RESOURCES_ARMED == 1)); then
+		for link in "${WAN_MVT}" "${WAN_PEER}" "${LAN_BR}" "${LAN_TAP}" "${CLIENT_HOST}"; do
+			if ip link show "${link}" >/dev/null 2>&1; then
+				log "ERROR: reserved link remains after cleanup: ${link}"
+				failed=1
+			fi
+		done
+		for ns in "${CLIENT_NS}" "${WAN_NS}"; do
+			if sudo ip netns list | awk '{print $1}' | grep -qx "${ns}"; then
+				log "ERROR: reserved namespace remains after cleanup: ${ns}"
+				failed=1
+			fi
+		done
+		for state in \
+			"/var/lib/dhcpcd/${CLIENT_DEV}.lease" \
+			"/var/lib/dhcpcd/${WAN_PEER}.lease" \
+			"/run/dhcpcd/${CLIENT_DEV}.pid" \
+			"/run/dhcpcd/${WAN_PEER}.pid"; do
+			if sudo test -e "${state}"; then
+				log "ERROR: reserved dhcpcd state remains after cleanup: ${state}"
+				failed=1
+			fi
+		done
+	fi
+	if [[ -e "${IMAGE}" ]]; then
+		log "ERROR: decompressed image remains after cleanup: ${IMAGE}"
+		failed=1
+	fi
+	return "${failed}"
+}
+
+cleanup() {
+	local cleanup_failed=0
+	local pid pidfile remaining
+
+	((CLEANED == 1)) && return 0
+	set +e
+
+	if [[ -f "${SOCAT_PIDFILE}" ]]; then
+		pid="$(<"${SOCAT_PIDFILE}")"
+		if local_pid_is_ours "${pid}" socat "${SERIAL_SOCKET}"; then
+			kill "${pid}" 2>/dev/null
+			wait "${pid}" 2>/dev/null
+		fi
+	fi
+	if [[ -f "${CONSOLE_READER_PIDFILE}" ]]; then
+		pid="$(<"${CONSOLE_READER_PIDFILE}")"
+		if local_pid_is_ours "${pid}" cat "${CONSOLE}"; then
+			kill "${pid}" 2>/dev/null
+			wait "${pid}" 2>/dev/null
+		fi
+	fi
+
+	for pidfile in "${QEMU_PIDFILE}" "${QEMU_FALLBACK_PIDFILE}"; do
+		[[ -f "${pidfile}" ]] || continue
+		pid="$(sudo cat "${pidfile}" 2>/dev/null || true)"
+		if [[ -n "${pid}" ]] && qemu_pid_is_ours "${pid}"; then
+			sudo kill "${pid}" 2>/dev/null
+			for _ in $(seq 1 20); do
+				qemu_pid_is_ours "${pid}" || break
+				sleep 1
+			done
+			qemu_pid_is_ours "${pid}" && sudo kill -KILL "${pid}" 2>/dev/null
+		fi
+	done
+
+	if ((RESOURCES_ARMED == 1)); then
+		for ns in "${CLIENT_NS}" "${WAN_NS}"; do
+			if ! sudo ip netns list | awk '{print $1}' | grep -qx "${ns}"; then
+				continue
+			fi
+			for pid in $(sudo ip netns pids "${ns}" 2>/dev/null); do
+				sudo kill "${pid}" 2>/dev/null
+			done
+			sleep 1
+			for pid in $(sudo ip netns pids "${ns}" 2>/dev/null); do
+				sudo kill -KILL "${pid}" 2>/dev/null
+			done
+			for _ in $(seq 1 20); do
+				remaining="$(sudo ip netns pids "${ns}" 2>/dev/null)"
+				[[ -z "${remaining}" ]] && break
+				sleep 0.1
+			done
+			if [[ -n "${remaining}" ]]; then
+				log "ERROR: processes remain in reserved namespace ${ns}: ${remaining//$'\n'/ }"
+				cleanup_failed=1
+				continue
+			fi
+			if [[ "${ns}" == "${WAN_NS}" ]] && ((WAN_PEER_IN_NS == 1)); then
+				sudo ip -n "${WAN_NS}" link del "${WAN_PEER}" 2>/dev/null
+				WAN_PEER_IN_NS=0
+			fi
+			sudo ip netns del "${ns}" 2>/dev/null
+		done
+
+		for link in "${WAN_PEER}" "${LAN_TAP}" "${CLIENT_HOST}" "${LAN_BR}" "${WAN_MVT}"; do
+			ip link show "${link}" >/dev/null 2>&1 && sudo ip link del "${link}" 2>/dev/null
+		done
+		sudo rm -f \
+			"/var/lib/dhcpcd/${CLIENT_DEV}.lease" \
+			"/run/dhcpcd/${CLIENT_DEV}.pid"
+		sudo rm -f \
+			"/var/lib/dhcpcd/${WAN_PEER}.lease" \
+			"/run/dhcpcd/${WAN_PEER}.pid"
+	fi
+
+	rm -f "${IMAGE}"
+	if [[ -f "${RUN_DIR}/before-wan-link.txt" ]]; then
+		if ! snapshot_host after; then
+			log "ERROR: failed to capture host state after cleanup"
+			cleanup_failed=1
+		else
+			cmp -s "${RUN_DIR}/before-wan-link.txt" "${RUN_DIR}/after-wan-link.txt" || {
+				log "ERROR: physical WAN link state changed"
+				cleanup_failed=1
+			}
+			cmp -s "${RUN_DIR}/before-wan-address.txt" "${RUN_DIR}/after-wan-address.txt" || {
+				log "ERROR: physical WAN address changed"
+				cleanup_failed=1
+			}
+			cmp -s "${RUN_DIR}/before-routes.txt" "${RUN_DIR}/after-routes.txt" || {
+				log "ERROR: host routes changed"
+				cleanup_failed=1
+			}
+		fi
+	fi
+	if ((HOST_PING_STARTED == 1)); then
+		if ! reserved_resources_absent running; then
+			log "ERROR: cleanup assertions failed while continuity monitor was active"
+			cleanup_failed=1
+		fi
+		stop_host_ping || cleanup_failed=1
+		assert_host_continuity || cleanup_failed=1
+	fi
+	set -e
+	if ! reserved_resources_absent; then
+		log "ERROR: cleanup assertions failed"
+		cleanup_failed=1
+	fi
+	CLEANED=1
+	return "${cleanup_failed}"
+}
+
+on_exit() {
+	local rc=$?
+
+	trap - EXIT
+	trap '' INT TERM
+	if ! cleanup && ((rc == 0)); then
+		rc=1
+	fi
+	exit "${rc}"
+}
+
+assert_host_continuity() {
+	local failed=0
+
+	grep -Eq '(^|[[:space:]])0% packet loss' "${HOST_PING_LOG}" || {
+		log "ERROR: host gateway continuity check recorded packet loss"
+		failed=1
+	}
+	if grep -q 'no answer yet' "${HOST_PING_LOG}"; then
+		log "ERROR: host gateway continuity check recorded an unanswered probe"
+		failed=1
+	fi
+	return "${failed}"
+}
+
+run_ns_test() {
+	local name="$1"
+	shift
+
+	log "iperf3 ${name}: $*"
+	sudo ip netns exec "${CLIENT_NS}" iperf3 "$@" -J > "${RUN_DIR}/${name}.json"
+	jq -e '.error == null' "${RUN_DIR}/${name}.json" >/dev/null
+	jq '{protocol: .start.test_start.protocol, seconds: .start.test_start.duration, end: .end}' \
+		"${RUN_DIR}/${name}.json" > "${RUN_DIR}/${name}-summary.json"
+}
+
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+for cmd in sudo ip qemu-system-x86_64 gzip socat dhcpcd iperf3 dig curl jq ping flock; do
+	need "${cmd}"
+done
+acquire_run_lock
+
+[[ -r "${IMAGE_GZ}" ]] || die "image not readable: ${IMAGE_GZ}"
+ip link show "${WAN_PARENT}" >/dev/null 2>&1 || die "WAN parent does not exist: ${WAN_PARENT}"
+sudo -n true || die "passwordless sudo is required"
+[[ -r /dev/kvm && -w /dev/kvm ]] || die "/dev/kvm is not available"
+
+mkdir -p "${RUN_DIR}"
+: > "${RESULTS_LOG}"
+: > "${SERIAL_LOG}"
+snapshot_host before
+
+for link in "${WAN_MVT}" "${WAN_PEER}" "${LAN_BR}" "${LAN_TAP}" "${CLIENT_HOST}"; do
+	! ip link show "${link}" >/dev/null 2>&1 || die "reserved link already exists: ${link}"
+done
+for ns in "${CLIENT_NS}" "${WAN_NS}"; do
+	! sudo ip netns list | awk '{print $1}' | grep -qx "${ns}" || die "reserved namespace already exists: ${ns}"
+done
+for state in \
+	"/var/lib/dhcpcd/${CLIENT_DEV}.lease" \
+	"/var/lib/dhcpcd/${WAN_PEER}.lease" \
+	"/run/dhcpcd/${CLIENT_DEV}.pid" \
+	"/run/dhcpcd/${WAN_PEER}.pid"; do
+	! sudo test -e "${state}" || die "reserved dhcpcd state already exists: ${state}"
+done
+RESOURCES_ARMED=1
+
+for mac in "${LAN_MAC}" "${WAN_GUEST_MAC}" "${WAN_PEER_MAC}"; do
+	[[ "${mac}" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || die "invalid MAC address: ${mac}"
+done
+[[ "${LAN_MAC}" != "${WAN_GUEST_MAC}" && "${LAN_MAC}" != "${WAN_PEER_MAC}" &&
+   "${WAN_GUEST_MAC}" != "${WAN_PEER_MAC}" ]] ||
+	die "QEMU acceptance MAC addresses must be distinct"
+
+HOST_GATEWAY="$(ip -4 route show default dev "${WAN_PARENT}" | awk '$1 == "default" { print $3; exit }')"
+[[ "${HOST_GATEWAY}" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "no IPv4 gateway found on ${WAN_PARENT}"
+ping -n -c 3 -W 2 "${HOST_GATEWAY}" > "${RUN_DIR}/host-ping-baseline.log" 2>&1 ||
+	die "host gateway is not reachable before QEMU setup: ${HOST_GATEWAY}"
+begin_spawn_guard
+env "${PID_RUN_TOKEN}" ping -n -D -O -i 0.2 "${HOST_GATEWAY}" > "${HOST_PING_LOG}" 2>&1 &
+echo "$!" > "${HOST_PING_PIDFILE}"
+HOST_PING_STARTED=1
+end_spawn_guard
+sleep 1
+host_ping_pid_is_ours "$(<"${HOST_PING_PIDFILE}")" || die "host gateway continuity monitor did not start"
+
+log "decompressing image copy"
+gzip -dc "${IMAGE_GZ}" > "${IMAGE}"
+
+log "creating isolated LAN and macvtap WAN"
+sudo ip link add link "${WAN_PARENT}" name "${WAN_MVT}" type macvtap mode bridge
+sudo ip link set "${WAN_MVT}" address "${WAN_MVT_MAC}"
+sudo ip link set "${WAN_MVT}" up
+WAN_TAP="/dev/tap$(cat "/sys/class/net/${WAN_MVT}/ifindex")"
+[[ -c "${WAN_TAP}" ]] || die "macvtap device missing: ${WAN_TAP}"
+
+sudo ip link add name "${LAN_BR}" type bridge
+sudo ip tuntap add dev "${LAN_TAP}" mode tap user "$(id -u)" group "$(id -g)"
+sudo ip link set "${LAN_TAP}" master "${LAN_BR}"
+sudo ip link set "${LAN_TAP}" up
+sudo ip link set "${LAN_BR}" up
+
+sudo ip netns add "${CLIENT_NS}"
+sudo ip link add name "${CLIENT_HOST}" type veth peer name "${CLIENT_DEV}" netns "${CLIENT_NS}"
+sudo ip link set "${CLIENT_HOST}" master "${LAN_BR}"
+sudo ip link set "${CLIENT_HOST}" up
+sudo ip netns exec "${CLIENT_NS}" ip link set lo up
+sudo ip netns exec "${CLIENT_NS}" ip link set "${CLIENT_DEV}" up
+
+sudo ip netns add "${WAN_NS}"
+sudo ip link add link "${WAN_PARENT}" name "${WAN_PEER}" type macvlan mode bridge
+sudo ip link set "${WAN_PEER}" netns "${WAN_NS}"
+WAN_PEER_IN_NS=1
+sudo ip netns exec "${WAN_NS}" ip link set lo up
+sudo ip netns exec "${WAN_NS}" ip link set "${WAN_PEER}" address "${WAN_PEER_MAC}"
+sudo ip netns exec "${WAN_NS}" ip link set "${WAN_PEER}" up
+
+log "starting QEMU"
+begin_spawn_guard
+sudo env "${PID_RUN_TOKEN}" WAN_TAP="${WAN_TAP}" IMAGE="${IMAGE}" LAN_TAP="${LAN_TAP}" \
+	LAN_MAC="${LAN_MAC}" WAN_GUEST_MAC="${WAN_GUEST_MAC}" \
+	SERIAL_SOCKET="${SERIAL_SOCKET}" SERIAL_LOG="${SERIAL_LOG}" QEMU_PIDFILE="${QEMU_PIDFILE}" \
+	QEMU_FALLBACK_PIDFILE="${QEMU_FALLBACK_PIDFILE}" \
+	bash -c '
+		printf "%s\n" "$$" > "${QEMU_FALLBACK_PIDFILE}"
+		exec 3<>"${WAN_TAP}"
+		exec qemu-system-x86_64 \
+			-name yaof-c4-acceptance \
+			-enable-kvm -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
+			-drive "file=${IMAGE},format=raw,if=virtio,cache=writeback" \
+			-netdev "tap,id=lan,ifname=${LAN_TAP},script=no,downscript=no" \
+			-device "virtio-net-pci,netdev=lan,mac=${LAN_MAC}" \
+			-netdev tap,id=wan,fd=3 \
+			-device "virtio-net-pci,netdev=wan,mac=${WAN_GUEST_MAC}" \
+			-chardev "socket,id=serial,path=${SERIAL_SOCKET},server=on,wait=off,logfile=${SERIAL_LOG},logappend=on" \
+			-serial chardev:serial -monitor none -display none \
+			-pidfile "${QEMU_PIDFILE}"
+	' > "${RUN_DIR}/qemu.stdout.log" 2> "${RUN_DIR}/qemu.stderr.log" &
+
+wait_for_file "${QEMU_FALLBACK_PIDFILE}" 30 || {
+	end_spawn_guard
+	die "QEMU fallback pidfile was not created"
+}
+end_spawn_guard
+wait_for_file "${QEMU_PIDFILE}" 30 || die "QEMU pidfile was not created"
+wait_for_file "${SERIAL_SOCKET}" 30 || die "QEMU serial socket was not created"
+sudo chown "$(id -u):$(id -g)" "${QEMU_PIDFILE}" "${QEMU_FALLBACK_PIDFILE}" "${SERIAL_SOCKET}"
+chmod 0600 "${QEMU_PIDFILE}" "${QEMU_FALLBACK_PIDFILE}"
+chmod 0660 "${SERIAL_SOCKET}"
+
+begin_spawn_guard
+env "${PID_RUN_TOKEN}" socat "PTY,link=${CONSOLE},raw,echo=0,waitslave" "UNIX-CONNECT:${SERIAL_SOCKET}" \
+	> "${RUN_DIR}/socat.stdout.log" 2> "${RUN_DIR}/socat.stderr.log" &
+echo "$!" > "${SOCAT_PIDFILE}"
+end_spawn_guard
+wait_for_file "${CONSOLE}" 30 || die "serial console PTY was not created"
+begin_spawn_guard
+env "${PID_RUN_TOKEN}" cat "${CONSOLE}" > "${RUN_DIR}/console-mirror.log" 2>/dev/null &
+echo "$!" > "${CONSOLE_READER_PIDFILE}"
+end_spawn_guard
+
+log "waiting for OpenWrt console"
+wait_for_log 'Please press Enter to activate this console' 300 || die "OpenWrt console prompt timed out"
+send_console ""
+sleep 2
+
+log "waiting for OpenWrt service initialization"
+send_console "i=0; ready=0; while [ \$i -lt 180 ]; do if ubus -t 1 wait_for log >/dev/null 2>&1; then ready=1; break; fi; i=\$((i+1)); sleep 1; done; [ \$ready -eq 0 ] || sleep 10; echo __YAOF_INIT_\"READY__\"\$ready"
+wait_for_log '__YAOF_INIT_READY__' 210 || die "OpenWrt service initialization timed out"
+grep -q '__YAOF_INIT_READY__1' "${SERIAL_LOG}" || die "OpenWrt log service did not become ready"
+
+if [[ "${SKIP_MODULE_STRESS:-0}" != "1" ]]; then
+log "running SFE module load/unload stress"
+send_console "cat > /tmp/yaof-module-stress.sh <<'__YAOF_STRESS_EOF__'"
+send_console "#!/bin/sh"
+send_console "module_loaded() { grep -q \"^\$1 \" /proc/modules; }"
+send_console "wait_loaded() { n=0; while ! module_loaded \"\$1\"; do [ \$n -ge 10 ] && return 1; n=\$((n+1)); sleep 1; done; }"
+send_console "wait_unloaded() { n=0; while module_loaded \"\$1\"; do [ \$n -ge 10 ] && return 1; n=\$((n+1)); sleep 1; done; }"
+send_console "initial_qca=0; module_loaded qca_nss_sfe && initial_qca=1"
+send_console "initial_ecm=0; module_loaded ecm && initial_ecm=1"
+send_console "initial_legacy=0; module_loaded shortcut_fe && initial_legacy=1"
+send_console "initial_legacy6=0; module_loaded shortcut_fe_ipv6 && initial_legacy6=1"
+send_console "initial_legacy_cm=0; module_loaded shortcut_fe_cm && initial_legacy_cm=1"
+send_console "dmesg > /tmp/yaof-module-stress-before.log"
+send_console "dmesg -c >/dev/null"
+send_console "/etc/init.d/sfe-ecm stop >/dev/null 2>&1"
+send_console "module_loaded shortcut_fe_cm && rmmod shortcut-fe-cm >/dev/null 2>&1"
+send_console "module_loaded shortcut_fe_ipv6 && rmmod shortcut-fe-ipv6 >/dev/null 2>&1"
+send_console "module_loaded shortcut_fe && rmmod shortcut-fe >/dev/null 2>&1"
+send_console "module_loaded ecm && rmmod ecm >/dev/null 2>&1"
+send_console "module_loaded qca_nss_sfe && rmmod qca-nss-sfe >/dev/null 2>&1"
+send_console "rc=0"
+send_console "grep -Eq '^(qca_nss_sfe|ecm|shortcut_fe|shortcut_fe_ipv6|shortcut_fe_cm) ' /proc/modules && rc=5"
+send_console "i=1"
+send_console "while [ \$rc -eq 0 ] && [ \$i -le 100 ]; do"
+send_console "  modprobe qca-nss-sfe >/dev/null 2>&1 || { rc=11; break; }"
+send_console "  modprobe ecm >/dev/null 2>&1 || { rc=12; break; }"
+send_console "  wait_loaded qca_nss_sfe || { rc=13; break; }"
+send_console "  wait_loaded ecm || { rc=14; break; }"
+send_console "  rmmod ecm >/dev/null 2>&1 || { rc=15; break; }"
+send_console "  wait_unloaded ecm || { rc=16; break; }"
+send_console "  rmmod qca_nss_sfe >/dev/null 2>&1 || { rc=17; break; }"
+send_console "  wait_unloaded qca_nss_sfe || { rc=18; break; }"
+send_console "  i=\$((i+1))"
+send_console "done"
+send_console "v2_done=\$((i-1))"
+send_console "i=1"
+send_console "if [ \$rc -eq 0 ]; then"
+send_console "  while [ \$i -le 100 ]; do"
+send_console "    modprobe shortcut-fe >/dev/null 2>&1 || { rc=21; break; }"
+send_console "    modprobe shortcut-fe-ipv6 >/dev/null 2>&1 || { rc=22; break; }"
+send_console "    modprobe shortcut-fe-cm >/dev/null 2>&1 || { rc=23; break; }"
+send_console "    module_loaded shortcut_fe || { rc=24; break; }"
+send_console "    module_loaded shortcut_fe_ipv6 || { rc=25; break; }"
+send_console "    module_loaded shortcut_fe_cm || { rc=26; break; }"
+send_console "    rmmod shortcut-fe-cm >/dev/null 2>&1 || { rc=27; break; }"
+send_console "    rmmod shortcut-fe-ipv6 >/dev/null 2>&1 || { rc=28; break; }"
+send_console "    rmmod shortcut-fe >/dev/null 2>&1 || { rc=29; break; }"
+send_console "    grep -Eq '^(shortcut_fe|shortcut_fe_ipv6|shortcut_fe_cm) ' /proc/modules && { rc=30; break; }"
+send_console "    i=\$((i+1))"
+send_console "  done"
+send_console "fi"
+send_console "legacy_done=\$((i-1))"
+send_console "module_loaded shortcut_fe_cm && rmmod shortcut-fe-cm >/dev/null 2>&1"
+send_console "module_loaded shortcut_fe_ipv6 && rmmod shortcut-fe-ipv6 >/dev/null 2>&1"
+send_console "module_loaded shortcut_fe && rmmod shortcut-fe >/dev/null 2>&1"
+send_console "module_loaded ecm && rmmod ecm >/dev/null 2>&1"
+send_console "module_loaded qca_nss_sfe && rmmod qca-nss-sfe >/dev/null 2>&1"
+send_console "[ \$initial_qca -eq 0 ] || modprobe qca-nss-sfe >/dev/null 2>&1 || rc=51"
+send_console "[ \$initial_ecm -eq 0 ] || modprobe ecm >/dev/null 2>&1 || rc=52"
+send_console "[ \$initial_legacy -eq 0 ] || modprobe shortcut-fe >/dev/null 2>&1 || rc=53"
+send_console "[ \$initial_legacy6 -eq 0 ] || modprobe shortcut-fe-ipv6 >/dev/null 2>&1 || rc=54"
+send_console "[ \$initial_legacy_cm -eq 0 ] || modprobe shortcut-fe-cm >/dev/null 2>&1 || rc=55"
+send_console "dmesg > /tmp/yaof-module-stress.log"
+send_console "grep -Eiq 'BUG:|WARNING:|Oops:|general protection fault|use-after-free|refcount_t:|hung task|deadlock|Call Trace:' /tmp/yaof-module-stress.log && rc=40"
+send_console "echo __YAOF_MODULE_STRESS_\"V2__\"\$v2_done"
+send_console "echo __YAOF_MODULE_STRESS_\"LEGACY__\"\$legacy_done"
+send_console "echo __YAOF_MODULE_STRESS_\"RC__\"\$rc"
+send_console "__YAOF_STRESS_EOF__"
+send_console "sh /tmp/yaof-module-stress.sh"
+wait_for_log '__YAOF_MODULE_STRESS_RC__' 600 || die "SFE module stress timed out"
+grep -q '__YAOF_MODULE_STRESS_RC__0' "${SERIAL_LOG}" || {
+	send_console "echo __YAOF_MODULE_DIAG_\"BEGIN__\"; cat /tmp/yaof-module-stress.log; lsmod; logread | tail -150; echo __YAOF_MODULE_DIAG_\"END__\""
+	wait_for_log '__YAOF_MODULE_DIAG_END__' 30 || true
+	die "SFE module load/unload stress failed"
+}
+grep -q '__YAOF_MODULE_STRESS_V2__100' "${SERIAL_LOG}" || die "SFEv2/ECM module stress did not complete 100 cycles"
+grep -q '__YAOF_MODULE_STRESS_LEGACY__100' "${SERIAL_LOG}" || die "legacy SFE module stress did not complete 100 cycles"
+else
+	log "module stress skipped for network-only retry"
+fi
+
+log "isolating core network acceptance from optional dataplane services"
+send_console "/etc/init.d/einat disable >/dev/null 2>&1; /etc/init.d/einat stop >/dev/null 2>&1; killall einat >/dev/null 2>&1; /etc/init.d/qosmate disable >/dev/null 2>&1; /etc/init.d/qosmate stop >/dev/null 2>&1; echo __YAOF_NET_\"ISOLATED__\""
+wait_for_log '__YAOF_NET_ISOLATED__' 60 || die "optional dataplane services did not stop"
+
+log "configuring runtime LAN 192.168.50.1/24 and WAN DHCP"
+send_console "uci set network.lan.ipaddr='192.168.50.1'"
+send_console "uci set network.lan.netmask='255.255.255.0'"
+send_console "uci -q delete network.wan"
+send_console "uci set network.wan='interface'"
+send_console "uci set network.wan.device='eth1'"
+send_console "uci set network.wan.proto='dhcp'"
+send_console "uci commit network"
+send_console "/etc/init.d/network restart"
+send_console "i=0; wan_ip=''; while [ \$i -lt 60 ]; do wan_ip=\$(ifstatus wan | jsonfilter -e '@[\"ipv4-address\"][0].address' 2>/dev/null); [ -n \"\$wan_ip\" ] && break; i=\$((i+1)); sleep 1; done; echo __YAOF_WAN_\"IP__\"\$wan_ip"
+wait_for_log '__YAOF_WAN_IP__' 90 || die "runtime WAN DHCP timed out"
+if ! grep -q '__YAOF_WAN_IP__192\.168\.1\.' "${SERIAL_LOG}"; then
+	send_console "echo __YAOF_WAN_DIAG_\"BEGIN__\"; ip -s -d link show eth1; ip -4 address show; ip -4 route show; ps w | grep -E 'udhcpc|netifd'; logread | tail -100; echo __YAOF_WAN_DIAG_\"END__\""
+	wait_for_log '__YAOF_WAN_DIAG_END__' 30 || true
+	ip -s -d link show "${WAN_MVT}" > "${RUN_DIR}/host-macvtap-diagnostics.txt"
+	die "OpenWrt WAN did not receive a 192.168.1.0/24 lease"
+fi
+
+log "requesting WAN-side test peer DHCP lease"
+sudo ip netns exec "${WAN_NS}" dhcpcd -4 -B -q -L \
+	-C resolv.conf -C hostname -C ntp.conf -C yp.conf "${WAN_PEER}" \
+	> "${RUN_DIR}/wan-peer-dhcpcd.log" 2>&1 &
+echo "$!" > "${RUN_DIR}/wan-peer-dhcpcd.pid"
+
+WAN_PEER_IP=""
+for _ in $(seq 1 60); do
+	WAN_PEER_IP="$(sudo ip netns exec "${WAN_NS}" ip -4 -o address show dev "${WAN_PEER}" scope global | awk '{split($4,a,"/"); print a[1]; exit}')"
+	[[ -n "${WAN_PEER_IP}" ]] && break
+	sleep 1
+done
+[[ -n "${WAN_PEER_IP}" ]] || die "WAN peer DHCP timed out"
+log "WAN peer DHCP address: ${WAN_PEER_IP}"
+
+log "requesting LAN DHCP lease"
+sudo ip netns exec "${CLIENT_NS}" dhcpcd -4 -B -q -L \
+	-C resolv.conf -C hostname -C ntp.conf -C yp.conf "${CLIENT_DEV}" \
+	> "${RUN_DIR}/lan-client-dhcpcd.log" 2>&1 &
+echo "$!" > "${RUN_DIR}/lan-client-dhcpcd.pid"
+
+CLIENT_IP=""
+for _ in $(seq 1 60); do
+	CLIENT_IP="$(sudo ip netns exec "${CLIENT_NS}" ip -4 -o address show dev "${CLIENT_DEV}" scope global | awk '{split($4,a,"/"); print a[1]; exit}')"
+	[[ -n "${CLIENT_IP}" ]] && break
+	sleep 1
+done
+[[ "${CLIENT_IP}" == 192.168.50.* ]] || die "LAN DHCP did not assign a 192.168.50.0/24 address: ${CLIENT_IP:-none}"
+log "LAN client DHCP address: ${CLIENT_IP}"
+
+send_console "echo __YAOF_STATUS_\"BEGIN__\"; echo C4_CC=\$(cat /proc/sys/net/ipv4/tcp_congestion_control); echo C4_QDISC=\$(cat /proc/sys/net/core/default_qdisc); tc qdisc show; ifstatus wan; echo __YAOF_STATUS_\"END__\""
+wait_for_log '__YAOF_STATUS_END__' 60 || die "OpenWrt status capture timed out"
+grep -q 'C4_CC=c4' "${SERIAL_LOG}" || die "runtime TCP congestion control is not c4"
+grep -q 'C4_QDISC=fq' "${SERIAL_LOG}" || die "runtime default qdisc is not fq"
+
+log "validating LAN gateway, router, DNS, HTTPS and LuCI"
+sudo ip netns exec "${CLIENT_NS}" ip -4 address show > "${RUN_DIR}/client-address.txt"
+sudo ip netns exec "${CLIENT_NS}" ip -4 route show > "${RUN_DIR}/client-routes.txt"
+sudo ip netns exec "${CLIENT_NS}" ping -c 3 -W 3 192.168.50.1 | tee "${RUN_DIR}/ping-openwrt.txt"
+sudo ip netns exec "${CLIENT_NS}" ping -c 3 -W 3 192.168.1.1 | tee "${RUN_DIR}/ping-router.txt"
+sudo ip netns exec "${CLIENT_NS}" dig @223.5.5.5 qq.com A +short | tee "${RUN_DIR}/dns-qq.txt"
+grep -Eq '^[0-9]+(\.[0-9]+){3}$' "${RUN_DIR}/dns-qq.txt" || die "223.5.5.5 did not resolve qq.com"
+sudo ip netns exec "${CLIENT_NS}" curl -4 -L --max-time 30 -sS -o /dev/null \
+	-w '%{http_code} %{remote_ip}\n' https://qq.com/ | tee "${RUN_DIR}/https-qq.txt"
+grep -Eq '^[1-5][0-9]{2} ' "${RUN_DIR}/https-qq.txt" || die "HTTPS access to qq.com failed"
+sudo ip netns exec "${CLIENT_NS}" curl -sS -I --max-time 15 http://192.168.50.1/cgi-bin/luci \
+	| tee "${RUN_DIR}/luci-headers.txt"
+grep -Eq '^HTTP/.* (200|301|302|403)' "${RUN_DIR}/luci-headers.txt" || die "LuCI is not reachable"
+
+log "starting OpenWrt and WAN-side iperf3 servers"
+send_console "killall iperf3 2>/dev/null; iperf3 -s -D; echo __YAOF_IPERF_\"SERVER__\""
+wait_for_log '__YAOF_IPERF_SERVER__' 30 || die "OpenWrt iperf3 server did not start"
+sudo ip netns exec "${WAN_NS}" iperf3 -s > "${RUN_DIR}/wan-iperf-server.log" 2>&1 &
+echo "$!" > "${RUN_DIR}/wan-iperf-server.pid"
+sleep 2
+
+run_ns_test endpoint-send -c 192.168.50.1 -t 20 -P 8
+run_ns_test endpoint-reverse -c 192.168.50.1 -t 20 -P 8 -R
+run_ns_test endpoint-bidir -c 192.168.50.1 -t 30 -P 8 --bidir
+jq -e '.. | objects | select(.receiver_tcp_congestion? == "c4")' \
+	"${RUN_DIR}/endpoint-send.json" >/dev/null
+jq -e '.. | objects | select(.sender_tcp_congestion? == "c4")' \
+	"${RUN_DIR}/endpoint-reverse.json" >/dev/null
+jq -e '.. | objects | select(.sender_tcp_congestion? == "c4")' \
+	"${RUN_DIR}/endpoint-bidir.json" >/dev/null
+
+log "testing OpenWrt C4 sender toward WAN peer"
+send_console "iperf3 -c ${WAN_PEER_IP} -t 20 -P 8 -J > /tmp/wan-c4.json; rc=\$?; grep -A2 -m1 sender_tcp_congestion /tmp/wan-c4.json; echo __YAOF_WAN_IPERF_\"RC__\"\$rc"
+wait_for_log '__YAOF_WAN_IPERF_RC__' 90 || die "OpenWrt-to-WAN iperf3 timed out"
+grep -q '__YAOF_WAN_IPERF_RC__0' "${SERIAL_LOG}" || die "OpenWrt-to-WAN iperf3 failed"
+grep -Eq '"sender_tcp_congestion":[[:space:]]*"c4"' "${SERIAL_LOG}" || die "OpenWrt iperf3 sender did not report c4"
+
+run_ns_test forward-send -c "${WAN_PEER_IP}" -t 20 -P 8
+run_ns_test forward-reverse -c "${WAN_PEER_IP}" -t 20 -P 8 -R
+run_ns_test forward-bidir -c "${WAN_PEER_IP}" -t 30 -P 8 --bidir
+
+log "all runtime checks passed; cleaning temporary resources"
+cleanup || die "temporary resource cleanup failed"
+
+log "PASS: evidence retained in ${RUN_DIR}"
+printf '%s\n' "${RUN_DIR}"

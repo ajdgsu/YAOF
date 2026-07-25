@@ -13,27 +13,26 @@ Change-Id: Iebfb254590fb594f5baf232f849d1b7ae45ef757
 Signed-off-by: Zhi Chen <zhichen@codeaurora.org>
 ---
  include/net/netfilter/nf_conntrack_ecache.h |  15 ++-
- include/net/netns/conntrack.h               |   3 +
+ include/net/netns/conntrack.h               |   6 ++++++
  net/netfilter/Kconfig                       |   8 ++
  net/netfilter/nf_conntrack_core.c           |   4 +
  net/netfilter/nf_conntrack_ecache.c         | 103 +++++++++++++++++++-
  net/netfilter/nf_conntrack_netlink.c        |  17 ++++
- 6 files changed, 146 insertions(+), 4 deletions(-)
+ 6 files changed, 149 insertions(+), 4 deletions(-)
 
 --- a/include/net/netfilter/nf_conntrack_ecache.h
 +++ b/include/net/netfilter/nf_conntrack_ecache.h
-@@ -65,9 +65,14 @@ struct nf_ct_event_notifier {
+@@ -65,9 +65,13 @@ struct nf_ct_event_notifier {
  	int (*exp_event)(unsigned int events, const struct nf_exp_event *item);
  };
  
 -void nf_conntrack_register_notifier(struct net *net,
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+extern int nf_conntrack_register_notifier(struct net *net, struct notifier_block *nb);
-+extern int nf_conntrack_unregister_notifier(struct net *net, struct notifier_block *nb);
-+#else
 +int nf_conntrack_register_notifier(struct net *net,
  				   const struct nf_ct_event_notifier *nb);
  void nf_conntrack_unregister_notifier(struct net *net);
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++extern int nf_conntrack_register_chain_notifier(struct net *net, struct notifier_block *nb);
++extern int nf_conntrack_unregister_chain_notifier(struct net *net, struct notifier_block *nb);
 +#endif
  
  void nf_ct_deliver_cached_events(struct nf_conn *ct);
@@ -94,6 +93,15 @@ Signed-off-by: Zhi Chen <zhichen@codeaurora.org>
  #ifdef CONFIG_NF_CONNTRACK_EVENTS
 --- a/include/net/netns/conntrack.h
 +++ b/include/net/netns/conntrack.h
+@@ -7,5 +7,8 @@
+ #include <linux/atomic.h>
+ #include <linux/workqueue.h>
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++#include <linux/notifier.h>
++#endif
+ #include <linux/netfilter/nf_conntrack_tcp.h>
+ #ifdef CONFIG_NF_CT_PROTO_DCCP
+ #include <linux/netfilter/nf_conntrack_dccp.h>
 @@ -105,6 +105,9 @@ struct netns_ct {
  	u8			sysctl_checksum;
  
@@ -243,18 +251,11 @@ Signed-off-by: Zhi Chen <zhichen@codeaurora.org>
  EXPORT_SYMBOL_GPL(nf_ct_deliver_cached_events);
  
  void nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
-@@ -258,20 +333,43 @@ out_unlock:
+@@ -258,20 +333,29 @@ out_unlock:
  	rcu_read_unlock();
  }
  
 -void nf_conntrack_register_notifier(struct net *net,
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+int nf_conntrack_register_notifier(struct net *net,
-+				   struct notifier_block *nb)
-+{
-+	return atomic_notifier_chain_register(&net->ct.nf_conntrack_chain, nb);
-+}
-+#else
 +int nf_conntrack_register_notifier(struct net *net,
  				    const struct nf_ct_event_notifier *new)
  {
@@ -274,79 +275,39 @@ Signed-off-by: Zhi Chen <zhichen@codeaurora.org>
 -	mutex_unlock(&nf_ct_ecache_mutex);
 +	ret = 0;
 +out_unlock:
-+ 	mutex_unlock(&nf_ct_ecache_mutex);
++	mutex_unlock(&nf_ct_ecache_mutex);
 +	return ret;
  }
-+#endif
  EXPORT_SYMBOL_GPL(nf_conntrack_register_notifier);
  
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+int nf_conntrack_unregister_notifier(struct net *net, struct notifier_block *nb)
-+{
-+	return atomic_notifier_chain_unregister(&net->ct.nf_conntrack_chain, nb);
-+}
-+#else
  void nf_conntrack_unregister_notifier(struct net *net)
  {
  	mutex_lock(&nf_ct_ecache_mutex);
-@@ -279,6 +377,7 @@ void nf_conntrack_unregister_notifier(st
- 	mutex_unlock(&nf_ct_ecache_mutex);
- 	/* synchronize_rcu() is called after netns pre_exit */
- }
+@@ -312,6 +387,11 @@ bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp)
+ 		return true;
+ 	case 2: /* autodetect: no event listener, don't allocate extension. */
+-		if (!READ_ONCE(nf_ctnetlink_has_listener))
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++		if (!READ_ONCE(nf_ctnetlink_has_listener) &&
++		    !rcu_access_pointer(net->ct.nf_conntrack_chain.head))
++#else
++		if (!READ_ONCE(nf_ctnetlink_has_listener))
 +#endif
- EXPORT_SYMBOL_GPL(nf_conntrack_unregister_notifier);
- 
- void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state)
+ 			return true;
+ 		fallthrough;
+ 	case 1:
 --- a/net/netfilter/nf_conntrack_netlink.c
 +++ b/net/netfilter/nf_conntrack_netlink.c
-@@ -721,12 +721,19 @@ static size_t ctnetlink_nlmsg_size(const
- }
- 
- static int
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+ctnetlink_conntrack_event(struct notifier_block *this, unsigned long events, void *ptr)
-+#else
- ctnetlink_conntrack_event(unsigned int events, const struct nf_ct_event *item)
-+#endif
+@@ -3854,9 +3854,10 @@ MODULE_ALIAS_NFNL_SUBSYS(NFNL_SUBSYS_CTNETLINK_EXP);
+ static int __net_init ctnetlink_net_init(struct net *net)
  {
- 	const struct nf_conntrack_zone *zone;
- 	struct net *net;
- 	struct nlmsghdr *nlh;
- 	struct nlattr *nest_parms;
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	struct nf_ct_event *item = (struct nf_ct_event *)ptr;
-+#endif
- 	struct nf_conn *ct = item->ct;
- 	struct sk_buff *skb;
- 	unsigned int type;
-@@ -3756,11 +3763,17 @@ static int ctnetlink_stat_exp_cpu(struct
+ #ifdef CONFIG_NF_CONNTRACK_EVENTS
+-	nf_conntrack_register_notifier(net, &ctnl_notifier);
++	return nf_conntrack_register_notifier(net, &ctnl_notifier);
++#else
++	return 0;
+ #endif
+-	return 0;
  }
  
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+static struct notifier_block ctnl_notifier = {
-+	.notifier_call = ctnetlink_conntrack_event
-+};
-+#else
- static struct nf_ct_event_notifier ctnl_notifier = {
- 	.ct_event = ctnetlink_conntrack_event,
- 	.exp_event = ctnetlink_expect_event,
- };
- #endif
-+#endif
- 
- static const struct nfnl_callback ctnl_cb[IPCTNL_MSG_MAX] = {
- 	[IPCTNL_MSG_CT_NEW]	= {
-@@ -3859,8 +3872,12 @@ static int __net_init ctnetlink_net_init
  static void ctnetlink_net_pre_exit(struct net *net)
- {
- #ifdef CONFIG_NF_CONNTRACK_EVENTS
-+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-+	nf_conntrack_unregister_notifier(net,&ctnl_notifier);
-+#else
- 	nf_conntrack_unregister_notifier(net);
- #endif
-+#endif
- }
- 
- static struct pernet_operations ctnetlink_net_ops = {

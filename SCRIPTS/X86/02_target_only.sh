@@ -24,6 +24,35 @@ printf '%s\n' \
     '# CONFIG_SQUASHFS_XZ is not set' \
     >> target/linux/x86/config-6.12
 
+# Build C4 and FQ into the x86 kernel and make them the defaults. Keep CUBIC
+# and FQ-CoDel available as non-default alternatives.
+sed -i \
+    -e '/^CONFIG_TCP_CONG_C4=/d' \
+    -e '/^# CONFIG_TCP_CONG_C4 is not set$/d' \
+    -e '/^CONFIG_DEFAULT_C4=/d' \
+    -e '/^# CONFIG_DEFAULT_C4 is not set$/d' \
+    -e '/^CONFIG_DEFAULT_CUBIC=/d' \
+    -e '/^# CONFIG_DEFAULT_CUBIC is not set$/d' \
+    -e '/^CONFIG_DEFAULT_TCP_CONG=/d' \
+    -e '/^CONFIG_NET_SCH_FQ=/d' \
+    -e '/^# CONFIG_NET_SCH_FQ is not set$/d' \
+    -e '/^CONFIG_DEFAULT_FQ=/d' \
+    -e '/^# CONFIG_DEFAULT_FQ is not set$/d' \
+    -e '/^CONFIG_DEFAULT_FQ_CODEL=/d' \
+    -e '/^# CONFIG_DEFAULT_FQ_CODEL is not set$/d' \
+    -e '/^CONFIG_DEFAULT_NET_SCH=/d' \
+    target/linux/x86/config-6.12
+printf '%s\n' \
+    'CONFIG_TCP_CONG_C4=y' \
+    'CONFIG_DEFAULT_C4=y' \
+    '# CONFIG_DEFAULT_CUBIC is not set' \
+    'CONFIG_DEFAULT_TCP_CONG="c4"' \
+    'CONFIG_NET_SCH_FQ=y' \
+    'CONFIG_DEFAULT_FQ=y' \
+    '# CONFIG_DEFAULT_FQ_CODEL is not set' \
+    'CONFIG_DEFAULT_NET_SCH="fq"' \
+    >> target/linux/x86/config-6.12
+
 sed -i \
     '/define KernelPackage\/fs-squashfs/,/endef/ s/CONFIG_SQUASHFS_XZ=y/CONFIG_SQUASHFS_LZ4=y/' \
     package/kernel/linux/modules/fs.mk

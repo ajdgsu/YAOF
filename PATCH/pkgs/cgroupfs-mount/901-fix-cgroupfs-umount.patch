@@ -4,26 +4,37 @@ Date: Wed, 23 Aug 2023 20:11:57 +0800
 Subject: [PATCH 2/2] fix cgroupfs-umount
 
 ---
- cgroupfs-umount | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
+ cgroupfs-umount | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/cgroupfs-umount b/cgroupfs-umount
 index ac26b6b..5b4c86e 100755
 --- a/cgroupfs-umount
 +++ b/cgroupfs-umount
-@@ -24,8 +24,11 @@ for sys in *; do
- 		umount $sys
+@@ -24,8 +24,20 @@ for sys in *; do
+-		umount $sys
++		if ! umount "$sys"; then
++			echo "failed to unmount cgroup child: $sys" >&2
++			status=1
++			continue
++		fi
  	fi
- 	if [ -d $sys ]; then
+-	if [ -d $sys ]; then
++	if [ -d "$sys" ]; then
 -		rmdir $sys || true
-+		rm -rf $sys || true
++		rmdir "$sys" || true
  	fi
  done
  
 +cd /
-+umount /sys/fs/cgroup || true
++if mountpoint -q /sys/fs/cgroup; then
++	if ! umount /sys/fs/cgroup; then
++		echo "failed to unmount cgroup root" >&2
++		status=1
++	fi
++fi
 +
- exit 0
+-exit 0
++exit "${status:-0}"
 -- 
 2.34.8
-

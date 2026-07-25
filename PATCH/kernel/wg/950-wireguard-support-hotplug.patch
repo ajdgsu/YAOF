@@ -8,7 +8,7 @@
  obj-$(CONFIG_WIREGUARD) := wireguard.o
 --- /dev/null
 +++ b/drivers/net/wireguard/hotplug.c
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,146 @@
 +/*
 + *  oui-tertf Hotplug driver
 + *
@@ -23,6 +23,9 @@
 +#include <linux/skbuff.h>
 +#include <linux/netlink.h>
 +#include <linux/kobject.h>
++#include <linux/list.h>
++#include <linux/slab.h>
++#include <linux/string.h>
 +
 +#include <linux/workqueue.h>
 +
@@ -34,11 +37,12 @@
 +
 +struct work_struct wg_event_work;
 +struct wg_event {
-+    struct work_struct work;
++    struct list_head list;
 +    char ifname[IFNAMSIZ];
-+    const char *action;
++    char action[32];
 +};
-+struct wg_event *gl_wg_event;
++static LIST_HEAD(wg_event_queue);
++static bool wg_hotplug_stopping;
 +
 +static DEFINE_SPINLOCK(event_lock);
 +
@@ -76,61 +80,79 @@
 +    struct wg_event *event;
 +    struct sk_buff *skb;
 +    char ifname[IFNAMSIZ];
-+    const char *action;
++    char action[32];
 +
-+    event = container_of(mywork, struct wg_event, work);
-+    if (!event)
-+        return;
-+    skb = alloc_skb(BH_SKB_SIZE, GFP_KERNEL);
-+    if (!skb)
-+        return;
-+    strcpy(ifname, event->ifname);
-+    action = event->action;
++    for (;;) {
++        spin_lock_bh(&event_lock);
++        if (list_empty(&wg_event_queue)) {
++            spin_unlock_bh(&event_lock);
++            return;
++        }
++        event = list_first_entry(&wg_event_queue, struct wg_event, list);
++        list_del(&event->list);
++        strscpy(ifname, event->ifname, sizeof(ifname));
++        strscpy(action, event->action, sizeof(action));
++        spin_unlock_bh(&event_lock);
++        kfree(event);
++
++        skb = alloc_skb(BH_SKB_SIZE, GFP_KERNEL);
++        if (!skb)
++            continue;
 +
 +    /*pr_info("wireguard-hotplug IFNAME=%s ACTION=%s\n", ifname, action);*/
 +
-+    bh_event_add_var(skb, 0, "SUBSYSTEM=%s", SUBSYSTEM_NAME);
++        bh_event_add_var(skb, 0, "SUBSYSTEM=%s", SUBSYSTEM_NAME);
 +
-+    spin_lock(&event_lock);
-+    bh_event_add_var(skb, 0, "ACTION=%s", action);
-+    bh_event_add_var(skb, 0, "ifname=%s", ifname);
-+    spin_unlock(&event_lock);
++        bh_event_add_var(skb, 0, "ACTION=%s", action);
++        bh_event_add_var(skb, 0, "ifname=%s", ifname);
 +
-+    NETLINK_CB(skb).dst_group = 1;
-+    broadcast_uevent(skb, 0, 1, GFP_KERNEL);
++        NETLINK_CB(skb).dst_group = 1;
++        broadcast_uevent(skb, 0, 1, GFP_KERNEL);
++    }
 +}
 +
 +void wireguard_hotplug(const char *ifname, const char *action)
 +{
-+    if(gl_wg_event == NULL){
-+        return;
-+    }
++    struct wg_event *event;
 +    if (0 == strcmp(ifname,"wgserver"))
 +	return;
 +
-+    spin_lock(&event_lock);
-+    memcpy(gl_wg_event->ifname, ifname, IFNAMSIZ);
-+    gl_wg_event->action = action;
-+    spin_unlock(&event_lock);
-+
-+    schedule_work(&gl_wg_event->work);
++    event = kzalloc(sizeof(*event), GFP_ATOMIC);
++    if (!event)
++        return;
++    strscpy(event->ifname, ifname, sizeof(event->ifname));
++    strscpy(event->action, action, sizeof(event->action));
++    spin_lock_bh(&event_lock);
++    if (wg_hotplug_stopping) {
++        spin_unlock_bh(&event_lock);
++        kfree(event);
++        return;
++    }
++    list_add_tail(&event->list, &wg_event_queue);
++    schedule_work(&wg_event_work);
++    spin_unlock_bh(&event_lock);
 +}
 +
 +void wg_hotplug_init(void)
 +{
-+    gl_wg_event = (struct wg_event *)kzalloc(sizeof(struct wg_event),GFP_KERNEL);
-+    if(gl_wg_event == NULL){
-+        return;
-+    }
-+    gl_wg_event->work = wg_event_work;
-+    INIT_WORK(&gl_wg_event->work, wireguard_send_hotplug);
++    wg_hotplug_stopping = false;
++    INIT_WORK(&wg_event_work, wireguard_send_hotplug);
 +}
 +
 +void wg_hotplug_free(void)
 +{
-+    if(gl_wg_event){
-+        kfree(gl_wg_event);
++    struct wg_event *event, *tmp;
++
++    spin_lock_bh(&event_lock);
++    wg_hotplug_stopping = true;
++    spin_unlock_bh(&event_lock);
++    cancel_work_sync(&wg_event_work);
++    spin_lock_bh(&event_lock);
++    list_for_each_entry_safe(event, tmp, &wg_event_queue, list) {
++        list_del(&event->list);
++        kfree(event);
 +    }
++    spin_unlock_bh(&event_lock);
 +    return;
 +}
 --- /dev/null
@@ -152,7 +174,7 @@
 --- a/drivers/net/wireguard/main.c
 +++ b/drivers/net/wireguard/main.c
 @@ -17,6 +17,8 @@
- #include <linux/genetlink.h>
+ #include <net/genetlink.h>
  #include <net/rtnetlink.h>
  
 +#include "hotplug.h"
@@ -160,7 +182,7 @@
  static int __init wg_mod_init(void)
  {
  	int ret;
-@@ -45,6 +47,8 @@ static int __init mod_init(void)
+@@ -45,6 +47,8 @@ static int __init wg_mod_init(void)
  	if (ret < 0)
  		goto err_netlink;
  
@@ -171,7 +193,7 @@
  
 @@ -62,6 +66,7 @@ err_allowedips:
  
- static void __exit mod_exit(void)
+ static void __exit wg_mod_exit(void)
  {
 +	wg_hotplug_free();
  	wg_genetlink_uninit();

@@ -9,7 +9,7 @@
  	ip_route_output_compat(net, daddr, saddr, tos, oif)
  
  static inline struct rtable *ip_route_output_compat(struct net *net,
-@@ -56,7 +56,7 @@
+@@ -57,7 +57,7 @@
   * Not present in dd-wrt kernel. vlan_dev_real_dev() goes to the
   * underlying real device, functionally equivalent for single-level VLAN.
   */
@@ -18,7 +18,7 @@
  
  /*
   * netif_is_gre / netif_is_ip6gre
-@@ -115,7 +115,9 @@
+@@ -117,7 +117,9 @@
  	if (likely(dev->priv_flags & IFF_XMIT_DST_RELEASE)) {
  		skb_dst_drop(skb);
  	} else {
@@ -31,7 +31,25 @@
  	queue_index = netdev_pick_tx(dev, skb, NULL);
 --- a/sfe_ipv4.c
 +++ b/sfe_ipv4.c
-@@ -1510,13 +1510,13 @@
+@@ -963,8 +963,8 @@
+ 
+ 	rcu_read_lock();
+ 	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+-	rcu_read_unlock();
+ 	if (!sync_rule_callback) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -974,6 +974,7 @@
+ 	now_jiffies = get_jiffies_64();
+ 	sfe_ipv4_gen_sync_connection(si, c, &sis, reason, now_jiffies);
+ 	sync_rule_callback(&sis);
++	rcu_read_unlock();
+ }
+ 
+ #if defined(SFE_RFS_SUPPORTED)
+@@ -1510,15 +1511,15 @@
  	/*
  	 * Handle PPPoE bridge packets using 3-tuple acceleration if SFE_PPPOE_BR_ACCEL_MODE_EN_3T
  	 */
@@ -48,9 +66,80 @@
 +#endif
  
  	protocol = iph->protocol;
+ 	if (IPPROTO_UDP == protocol) {
+@@ -3919,6 +3920,10 @@
+ 	spin_lock_bh(&si->lock);
+ 	rcu_assign_pointer(si->many_sync_callback, cb);
+ 	spin_unlock_bh(&si->lock);
++
++	if (!cb) {
++		synchronize_rcu();
++	}
+ }
+ 
+ /*
+@@ -3932,6 +3937,10 @@
+ 	spin_lock_bh(&si->lock);
+ 	rcu_assign_pointer(si->sync_rule_callback, sync_rule_callback);
+ 	spin_unlock_bh(&si->lock);
++
++	if (!sync_rule_callback) {
++		synchronize_rcu();
++	}
+ }
+ /*
+  * sfe_ipv4_get_debug_dev()
+@@ -4014,8 +4023,8 @@
+ 
+ 	rcu_read_lock();
+ 	sync_rule_callback = rcu_dereference(si->many_sync_callback);
+-	rcu_read_unlock();
+ 	if (!sync_rule_callback) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -4087,6 +4096,7 @@
+ 	sfe_ipv4_sync_many_msg->cm.response = SFE_CMN_RESPONSE_ACK;
+ 
+ 	sync_rule_callback(sfe_ipv4_sync_many_msg);
++	rcu_read_unlock();
+ }
+ 
+ /*
+@@ -4897,6 +4907,11 @@
+ bool sfe_ipv4_cancel_delayed_work_sync(void)
+ {
+ 	struct sfe_ipv4 *si = &__si;
++
++	if (current_work() == &si->sync_dwork.work) {
++		return cancel_delayed_work(&si->sync_dwork);
++	}
++
+ 	return cancel_delayed_work_sync(&si->sync_dwork);
+ }
+ 
 --- a/sfe_ipv6.c
 +++ b/sfe_ipv6.c
-@@ -1236,13 +1236,13 @@
+@@ -961,8 +961,8 @@
+ 
+ 	rcu_read_lock();
+ 	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+-	rcu_read_unlock();
+ 	if (unlikely(!sync_rule_callback)) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -972,6 +972,7 @@
+ 	now_jiffies = get_jiffies_64();
+ 	sfe_ipv6_gen_sync_connection(si, c, &sis, reason, now_jiffies);
+ 	sync_rule_callback(&sis);
++	rcu_read_unlock();
+ }
+ 
+ #if defined(SFE_RFS_SUPPORTED)
+@@ -1236,15 +1237,15 @@
  	/*
  	 * Handle PPPoE bridge packets using 3-tuple acceleration if SFE_PPPOE_BR_ACCEL_MODE_EN_3T
  	 */
@@ -67,9 +156,62 @@
 +#endif
  
  	if (IPPROTO_UDP == next_hdr) {
+ 		return sfe_ipv6_recv_udp(si, skb, dev, len, iph, ihl, sync_on_find, l2_info, tun_outer, is_frag, fhdr);
+@@ -3584,6 +3585,10 @@
+ 	spin_lock_bh(&si->lock);
+ 	rcu_assign_pointer(si->sync_rule_callback, sync_rule_callback);
+ 	spin_unlock_bh(&si->lock);
++
++	if (!sync_rule_callback) {
++		synchronize_rcu();
++	}
+ }
+ 
+ /*
+@@ -3597,6 +3602,10 @@
+ 	spin_lock_bh(&si->lock);
+ 	rcu_assign_pointer(si->many_sync_callback, cb);
+ 	spin_unlock_bh(&si->lock);
++
++	if (!cb) {
++		synchronize_rcu();
++	}
+ }
+ 
+ /*
+@@ -3674,8 +3683,8 @@
+ 
+ 	rcu_read_lock();
+ 	sync_rule_callback = rcu_dereference(si->many_sync_callback);
+-	rcu_read_unlock();
+ 	if (!sync_rule_callback) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+@@ -3746,6 +3755,7 @@
+ 	sfe_ipv6_sync_many_msg->cm.response = SFE_CMN_RESPONSE_ACK;
+ 
+ 	sync_rule_callback(sfe_ipv6_sync_many_msg);
++	rcu_read_unlock();
+ }
+ 
+ /*
+@@ -4682,6 +4692,11 @@
+ bool sfe_ipv6_cancel_delayed_work_sync(void)
+ {
+ 	struct sfe_ipv6 *si = &__si6;
++
++	if (current_work() == &si->sync_dwork.work) {
++		return cancel_delayed_work(&si->sync_dwork);
++	}
++
+ 	return cancel_delayed_work_sync(&si->sync_dwork);
+ }
+ 
 --- a/sfe_ipv4_udp.c
 +++ b/sfe_ipv4_udp.c
-@@ -748,7 +748,7 @@
+@@ -745,7 +745,7 @@
  		struct rtable *rt;
  		dst = dst_cache_get(&cm->dst_cache);
  		if (unlikely(!dst)) {
@@ -80,7 +222,7 @@
  				rcu_read_unlock();
 --- a/sfe_ipv4_tcp.c
 +++ b/sfe_ipv4_tcp.c
-@@ -909,7 +909,7 @@
+@@ -906,7 +906,7 @@
  		struct rtable *rt;
  		dst = dst_cache_get(&cm->dst_cache);
  		if (unlikely(!dst)) {
@@ -89,3 +231,951 @@
  			if (IS_ERR(rt)) {
  				DEBUG_TRACE("%px: VXLAN-GPE failed to get IPv4 route: %pI4 \n", skb, &ip_hdr(skb)->daddr);
  				rcu_read_unlock();
+--- a/sfe.c
++++ b/sfe.c
+@@ -9,6 +9,8 @@
+ 
+ #include <linux/debug_mem_usage.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/refcount.h>
+ #include <linux/version.h>
+ #include <linux/sysfs.h>
+ #include <linux/skbuff.h>
+@@ -41,11 +43,11 @@
+ extern int max_ipv6_conn;
+ bool fast_tc_filter = false;
+ uint8_t sfe_fls_flush_on_hwm_enable;
++static DEFINE_MUTEX(sfe_ipv4_callback_mutex);
++static DEFINE_MUTEX(sfe_ipv6_callback_mutex);
+ 
+ #define SFE_MESSAGE_VERSION 0x1
+ #define sfe_ipv6_addr_copy(src, dest) memcpy((void *)(dest), (void *)(src), 16)
+-#define sfe_ipv4_stopped(CTX) (rcu_dereference((CTX)->ipv4_stats_sync_cb) == NULL)
+-#define sfe_ipv6_stopped(CTX) (rcu_dereference((CTX)->ipv6_stats_sync_cb) == NULL)
+ #define SFE_IPSEC_TUNNEL_TYPE 31
+ 
+ typedef enum sfe_exception {
+@@ -96,9 +98,35 @@
+ struct sfe_response_msg {
+ 	struct list_head node;
+ 	sfe_msg_types_t type;
++	struct sfe_callback_generation *generation;
++	unsigned int delivery_type;
++	size_t msg_size;
+ 	uint8_t msg[];
+ };
+ 
++enum sfe_callback_delivery_type {
++	SFE_CALLBACK_DELIVERY_RESPONSE,
++	SFE_CALLBACK_DELIVERY_ONE,
++	SFE_CALLBACK_DELIVERY_MANY
++};
++
++/*
++ * A generation owns the ECM callbacks and app_data used by queued messages.
++ * The publication reference is dropped only after producers and delivery have
++ * been drained.  A running delivery holds the final reference for reentrant
++ * unregister until the callback returns.
++ */
++struct sfe_callback_generation {
++	refcount_t refs;
++	sfe_msg_types_t type;
++	sfe_ipv4_msg_callback_t ipv4_one_cb;
++	sfe_ipv4_msg_callback_t ipv4_many_cb;
++	sfe_ipv6_msg_callback_t ipv6_one_cb;
++	sfe_ipv6_msg_callback_t ipv6_many_cb;
++	void *app_data;
++	bool deferred_free;
++};
++
+ /*
+  * SFE context instance, private for SFE
+  */
+@@ -114,6 +142,10 @@
+ 	spinlock_t lock;		/* Lock to protect message queue */
+ 
+ 	struct work_struct work;	/* Work to send response message back to caller*/
++	struct sfe_callback_generation __rcu *ipv4_generation;
++	struct sfe_callback_generation __rcu *ipv6_generation;
++	struct sfe_callback_generation *delivery_generation;
++	sfe_msg_types_t delivery_type;
+ 
+ 	sfe_ipv4_msg_callback_t __rcu ipv4_stats_sync_cb;	/* Callback to call to sync ipv4 statistics */
+ 	sfe_ipv4_msg_callback_t __rcu ipv4_stats_sync_many_cb;	/* Callback to call to sync many ipv4 statistics */
+@@ -133,6 +165,40 @@
+ 
+ struct sfe_fls sfe_fls_info;
+ 
++static void sfe_callback_generation_put(struct sfe_callback_generation *generation)
++{
++	if (generation && refcount_dec_and_test(&generation->refs)) {
++		generation->ipv4_one_cb = NULL;
++		generation->ipv4_many_cb = NULL;
++		generation->ipv6_one_cb = NULL;
++		generation->ipv6_many_cb = NULL;
++		generation->ipv6_one_cb = NULL;
++		generation->app_data = NULL;
++		kfree(generation);
++	}
++}
++
++static bool sfe_callback_generation_put_last(struct sfe_callback_generation *generation)
++{
++	return generation && refcount_dec_and_test(&generation->refs);
++}
++
++static void sfe_callback_generation_free(struct sfe_callback_generation *generation)
++{
++	if (!generation) {
++		return;
++	}
++
++	generation->ipv4_one_cb = NULL;
++	generation->ipv4_many_cb = NULL;
++	generation->ipv6_one_cb = NULL;
++	generation->ipv6_many_cb = NULL;
++	generation->ipv6_one_cb = NULL;
++	generation->ipv6_many_cb = NULL;
++	generation->app_data = NULL;
++	kfree(generation);
++}
++
+ /*
+  * Convert public SFE context to internal context
+  */
+@@ -407,6 +473,7 @@
+ static void sfe_clean_response_msg_by_type(struct sfe_ctx_instance_internal *sfe_ctx, sfe_msg_types_t msg_type)
+ {
+ 	struct sfe_response_msg *response, *tmp;
++	struct sfe_callback_generation *generation;
+ 
+ 	if (!sfe_ctx) {
+ 		return;
+@@ -416,10 +483,9 @@
+ 	list_for_each_entry_safe(response, tmp, &sfe_ctx->msg_queue, node) {
+ 		if (response->type == msg_type) {
+ 			list_del(&response->node);
+-			/*
+-			 * Free response message
+-			 */
++			generation = response->generation;
+ 			kfree(response);
++			sfe_callback_generation_put(generation);
+ 		}
+ 	}
+ 	spin_unlock_bh(&sfe_ctx->lock);
+@@ -435,24 +501,49 @@
+ static void sfe_process_response_msg(struct work_struct *work)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = container_of(work, struct sfe_ctx_instance_internal, work);
+-	struct sfe_response_msg *response;
+-	int quota = 2;
++	struct sfe_response_msg *response = NULL;
++	struct sfe_callback_generation *generation;
+ 
+-	spin_lock_bh(&sfe_ctx->lock);
+-	while (quota-- && (response = list_first_entry_or_null(&sfe_ctx->msg_queue, struct sfe_response_msg, node))) {
++	for (;;) {
++		spin_lock_bh(&sfe_ctx->lock);
++		response = list_first_entry_or_null(&sfe_ctx->msg_queue,
++						   struct sfe_response_msg, node);
++		if (!response) {
++			spin_unlock_bh(&sfe_ctx->lock);
++			break;
++		}
+ 		list_del(&response->node);
++		WRITE_ONCE(sfe_ctx->delivery_generation, response->generation);
++		WRITE_ONCE(sfe_ctx->delivery_type, response->type);
+ 		spin_unlock_bh(&sfe_ctx->lock);
+ 
+-		/*
+-		 * Send response message back to caller
+-		 */
+-		if ((response->type == SFE_MSG_TYPE_IPV4) && !sfe_ipv4_stopped(sfe_ctx)) {
++		if (response->delivery_type == SFE_CALLBACK_DELIVERY_ONE) {
++			if (response->type == SFE_MSG_TYPE_IPV4) {
++				if (response->generation->ipv4_one_cb) {
++					response->generation->ipv4_one_cb(response->generation->app_data,
++									(struct sfe_ipv4_msg *)response->msg);
++				}
++			} else if (response->generation->ipv6_one_cb) {
++				response->generation->ipv6_one_cb(response->generation->app_data,
++								(struct sfe_ipv6_msg *)response->msg);
++			}
++		} else if (response->delivery_type == SFE_CALLBACK_DELIVERY_MANY) {
++			if (response->type == SFE_MSG_TYPE_IPV4) {
++				if (response->generation->ipv4_many_cb) {
++					response->generation->ipv4_many_cb(response->generation->app_data,
++									(struct sfe_ipv4_msg *)response->msg);
++				}
++			} else if (response->generation->ipv6_many_cb) {
++				response->generation->ipv6_many_cb(response->generation->app_data,
++								(struct sfe_ipv6_msg *)response->msg);
++			}
++		} else if (response->type == SFE_MSG_TYPE_IPV4) {
+ 			struct sfe_ipv4_msg *msg = (struct sfe_ipv4_msg *)response->msg;
+ 			sfe_ipv4_msg_callback_t callback = (sfe_ipv4_msg_callback_t)msg->cm.cb;
+ 			if (callback) {
+-				callback((void *)msg->cm.app_data, msg);
++				callback((void *)msg->cm.app_data, (struct sfe_ipv4_msg *)msg);
+ 			}
+-		} else if ((response->type == SFE_MSG_TYPE_IPV6) && !sfe_ipv6_stopped(sfe_ctx)) {
++		} else {
+ 			struct sfe_ipv6_msg *msg = (struct sfe_ipv6_msg *)response->msg;
+ 			sfe_ipv6_msg_callback_t callback = (sfe_ipv6_msg_callback_t)msg->cm.cb;
+ 			if (callback) {
+@@ -460,19 +551,30 @@
+ 			}
+ 		}
+ 
+-		/*
+-		 * Free response message
+-		 */
++		WRITE_ONCE(sfe_ctx->delivery_generation, NULL);
++		generation = response->generation;
+ 		kfree(response);
+-		spin_lock_bh(&sfe_ctx->lock);
+-	}
+-	spin_unlock_bh(&sfe_ctx->lock);
+-
+-	/*
+-	 * If having more msg in the queue, schedule it again.
+-	 */
+-	if (response) {
+-		schedule_work(&sfe_ctx->work);
++		if (sfe_callback_generation_put_last(generation)) {
++			if (generation->deferred_free) {
++				spin_lock_bh(&sfe_ctx->lock);
++				if (generation->type == SFE_MSG_TYPE_IPV4) {
++					rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, NULL);
++					rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, NULL);
++					sfe_ctx->ipv4_stats_sync_data = NULL;
++				} else {
++					rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, NULL);
++					rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, NULL);
++					sfe_ctx->ipv6_stats_sync_data = NULL;
++				}
++				spin_unlock_bh(&sfe_ctx->lock);
++				if (generation->type == SFE_MSG_TYPE_IPV4) {
++					mutex_unlock(&sfe_ipv4_callback_mutex);
++				} else {
++					mutex_unlock(&sfe_ipv6_callback_mutex);
++				}
++			}
++			sfe_callback_generation_free(generation);
++		}
+ 	}
+ }
+ 
+@@ -486,22 +588,11 @@
+  * @return !NULL, success; NULL, failed
+  */
+ static struct sfe_response_msg *
+-sfe_alloc_response_msg(sfe_msg_types_t type, void *msg)
++sfe_alloc_response_msg_size(sfe_msg_types_t type, void *msg, size_t size,
++				    struct sfe_callback_generation *generation,
++				    unsigned int delivery_type)
+ {
+ 	struct sfe_response_msg *response;
+-	int size;
+-
+-	switch (type) {
+-	case SFE_MSG_TYPE_IPV4:
+-		size = sizeof(struct sfe_ipv4_msg);
+-		break;
+-	case SFE_MSG_TYPE_IPV6:
+-		size = sizeof(struct sfe_ipv6_msg);
+-		break;
+-	default:
+-		DEBUG_ERROR("message type %d not supported\n", type);
+-		return NULL;
+-	}
+ 
+ 	response = (struct sfe_response_msg *)kzalloc(sizeof(struct sfe_response_msg) + size, GFP_ATOMIC);
+ 	if (!response) {
+@@ -510,6 +601,9 @@
+ 	}
+ 
+ 	response->type = type;
++	response->generation = generation;
++	response->delivery_type = delivery_type;
++	response->msg_size = size;
+ 
+ 	if (msg) {
+ 		memcpy(response->msg, msg, size);
+@@ -518,6 +612,17 @@
+ 	return response;
+ }
+ 
++static struct sfe_response_msg *
++sfe_alloc_response_msg(sfe_msg_types_t type, void *msg,
++			       struct sfe_callback_generation *generation)
++{
++	size_t size = (type == SFE_MSG_TYPE_IPV4) ? sizeof(struct sfe_ipv4_msg) :
++							    sizeof(struct sfe_ipv6_msg);
++
++	return sfe_alloc_response_msg_size(type, msg, size, generation,
++						SFE_CALLBACK_DELIVERY_RESPONSE);
++}
++
+ /*
+  * sfe_fast_xmit_check()
+  *	Check the fast transmit feasibility.
+@@ -603,16 +708,35 @@
+ static void sfe_ipv4_stats_many_sync_callback(struct sfe_ipv4_msg *msg)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
+-	sfe_ipv4_msg_callback_t sync_cb;
++	struct sfe_callback_generation *generation;
++	struct sfe_response_msg *response;
++	size_t size;
+ 
+ 	rcu_read_lock();
+-	sync_cb = rcu_dereference(sfe_ctx->ipv4_stats_sync_many_cb);
+-	rcu_read_unlock();
+-	if (!sync_cb) {
+-		sfe_incr_exceptions(SFE_EXCEPTION_NO_SYNC_CB);
++	generation = rcu_dereference(sfe_ctx->ipv4_generation);
++	if (!generation || !generation->ipv4_many_cb ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+-	sync_cb(sfe_ctx->ipv4_stats_sync_data, msg);
++
++	size = offsetof(struct sfe_ipv4_msg, msg.conn_stats_many.conn_sync) +
++		(size_t)msg->msg.conn_stats_many.count * sizeof(struct sfe_ipv4_conn_sync);
++	if (size > PAGE_SIZE) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
++		return;
++	}
++
++	response = sfe_alloc_response_msg_size(SFE_MSG_TYPE_IPV4, msg, size,
++						       generation, SFE_CALLBACK_DELIVERY_MANY);
++	if (!response) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
++		return;
++	}
++	sfe_enqueue_msg(sfe_ctx, response);
++	rcu_read_unlock();
+ }
+ 
+ /*
+@@ -698,36 +822,35 @@
+ static void sfe_ipv4_stats_one_sync_callback(struct sfe_connection_sync *sis)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_response_msg *response;
++	struct sfe_callback_generation *generation;
+ 	struct sfe_ipv4_msg *msg;
+ 	struct sfe_ipv4_conn_sync *sync_msg;
+-	sfe_ipv4_msg_callback_t sync_cb;
+ 
+ 	rcu_read_lock();
+-	sync_cb = rcu_dereference(sfe_ctx->ipv4_stats_sync_cb);
+-	rcu_read_unlock();
+-	if (!sync_cb) {
+-		sfe_incr_exceptions(SFE_EXCEPTION_NO_SYNC_CB);
++	generation = rcu_dereference(sfe_ctx->ipv4_generation);
++	if (!generation || !generation->ipv4_one_cb ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+-	msg = kzalloc(sizeof(struct sfe_ipv4_msg), GFP_ATOMIC);
+-	if (!msg) {
+-		DEBUG_ERROR("Can't allocate the sync msg\n");
++	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV4, NULL, generation);
++	if (!response) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
+ 		return;
+ 	}
++	response->delivery_type = SFE_CALLBACK_DELIVERY_ONE;
++	msg = (struct sfe_ipv4_msg *)response->msg;
+ 	sync_msg = &(msg->msg.conn_stats);
+ 
+ 	sfe_cmn_msg_init(&msg->cm, 0, SFE_RX_CONN_STATS_SYNC_MSG,
+ 			sizeof(struct sfe_ipv4_conn_sync), NULL, NULL);
+ 
+ 	sfe_ipv4_stats_convert(sync_msg, sis);
+-
+-	/*
+-	 * SFE sync calling is excuted in a timer, so we can redirect it to ECM directly.
+-	 */
+-	sync_cb(sfe_ctx->ipv4_stats_sync_data, msg);
+-
+-	kfree(msg);
++	sfe_enqueue_msg(sfe_ctx, response);
++	rcu_read_unlock();
+ }
+ 
+ #if defined(SFE_RFS_SUPPORTED)
+@@ -1330,16 +1453,35 @@
+ sfe_tx_status_t sfe_ipv4_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_ipv4_msg *msg)
+ {
+ 	struct sfe_response_msg *response;
++	struct sfe_callback_generation *generation;
+ 	enum sfe_cmn_response ret;
++	sfe_tx_status_t status;
+ 
++	rcu_read_lock();
++	generation = rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv4_generation);
+ 	if (msg->cm.type == SFE_TX_CONN_STATS_SYNC_MANY_MSG) {
+-		return sfe_sync_ipv4_stats_many_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), msg);
++		if (!generation || !rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv4_stats_sync_many_cb)) {
++			rcu_read_unlock();
++			return SFE_TX_FAILURE_NOT_ENABLED;
++		}
++
++		status = sfe_sync_ipv4_stats_many_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), msg);
++		rcu_read_unlock();
++		return status;
+ 	}
+ 
+-	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV4, msg);
++	if (!generation || !rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv4_stats_sync_cb) ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
++		return SFE_TX_FAILURE_NOT_ENABLED;
++	}
++
++	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV4, msg, generation);
+ 	if (!response) {
+ 		sfe_incr_exceptions(SFE_EXCEPTION_ENQUEUE_FAILED);
+ 		msg->cm.error = SFE_RET_EXCEPTION_ENQUEUE_FAILED;
++		sfe_callback_generation_put(generation);
++		rcu_read_unlock();
+ 		return SFE_TX_FAILURE_QUEUE;
+ 	}
+ 
+@@ -1347,11 +1489,14 @@
+ 	if (ret == SFE_CMN_RESPONSE_EMSG) {
+ 		sfe_incr_exceptions(SFE_EXCEPTION_IPV4_MSG_UNKNOW);
+ 		kfree(response);
++		sfe_callback_generation_put(generation);
++		rcu_read_unlock();
+ 		return SFE_TX_FAILURE_NOT_ENABLED;
+ 	}
+ 
+ 	((struct sfe_ipv4_msg *)response->msg)->cm.response = msg->cm.response = ret;
+ 	sfe_enqueue_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), response);
++	rcu_read_unlock();
+ 	return SFE_TX_SUCCESS;
+ }
+ EXPORT_SYMBOL(sfe_ipv4_tx);
+@@ -1404,6 +1549,34 @@
+ }
+ EXPORT_SYMBOL(sfe_ipv4_max_conn_count);
+ 
++static struct sfe_callback_generation *sfe_ipv4_unpublish_generation(
++		struct sfe_ctx_instance_internal *sfe_ctx)
++{
++	struct sfe_callback_generation *generation;
++
++	sfe_ipv4_register_sync_rule_callback(NULL);
++	sfe_ipv4_register_many_sync_callback(NULL);
++
++	spin_lock_bh(&sfe_ctx->lock);
++	generation = rcu_dereference_protected(sfe_ctx->ipv4_generation,
++						lockdep_is_held(&sfe_ctx->lock));
++	rcu_assign_pointer(sfe_ctx->ipv4_generation, NULL);
++	spin_unlock_bh(&sfe_ctx->lock);
++
++	/* Drain both core producers and TX paths before touching the queue. */
++	synchronize_rcu();
++	sfe_ipv4_cancel_delayed_work_sync();
++	return generation;
++}
++
++static bool sfe_ipv4_current_delivery(struct sfe_ctx_instance_internal *sfe_ctx,
++					      struct sfe_callback_generation *generation)
++{
++	return current_work() == &sfe_ctx->work &&
++		READ_ONCE(sfe_ctx->delivery_type) == SFE_MSG_TYPE_IPV4 &&
++		READ_ONCE(sfe_ctx->delivery_generation) == generation;
++}
++
+ /*
+  * sfe_ipv4_notify_register()
+  *	Register a notifier callback for IPv4 messages from SFE
+@@ -1417,25 +1590,56 @@
+ 		sfe_ipv4_msg_callback_t many_rules_cb,void *app_data)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_callback_generation *generation;
++	struct sfe_callback_generation *old_generation;
+ 
+-	spin_lock_bh(&sfe_ctx->lock);
+-	/*
+-	 * Hook the shortcut sync callback.
+-	 */
+-	if (one_rule_cb && !sfe_ctx->ipv4_stats_sync_cb) {
+-		sfe_ipv4_register_sync_rule_callback(sfe_ipv4_stats_one_sync_callback);
++	if (WARN_ON_ONCE(current_work() == &sfe_ctx->work))
++		return NULL;
++
++	mutex_lock(&sfe_ipv4_callback_mutex);
++	generation = kzalloc(sizeof(*generation), GFP_KERNEL);
++	if (!generation) {
++		mutex_unlock(&sfe_ipv4_callback_mutex);
++		return NULL;
++	}
++	refcount_set(&generation->refs, 1);
++	generation->type = SFE_MSG_TYPE_IPV4;
++	generation->ipv4_one_cb = one_rule_cb;
++	generation->ipv4_many_cb = many_rules_cb;
++	generation->app_data = app_data;
++
++	old_generation = sfe_ipv4_unpublish_generation(sfe_ctx);
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
+-	}
+-	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, one_rule_cb);
+ 
+-	if (many_rules_cb && !sfe_ctx->ipv4_stats_sync_many_cb) {
+-		sfe_ipv4_register_many_sync_callback(sfe_ipv4_stats_many_sync_callback);
++	if (current_work() != &sfe_ctx->work) {
++		cancel_work_sync(&sfe_ctx->work);
++	}
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
++	if (old_generation) {
++		spin_lock_bh(&sfe_ctx->lock);
++		rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, NULL);
++		rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, NULL);
++		sfe_ctx->ipv4_stats_sync_data = NULL;
++		spin_unlock_bh(&sfe_ctx->lock);
++		sfe_callback_generation_put(old_generation);
+ 	}
+-	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, many_rules_cb);
+ 
++	spin_lock_bh(&sfe_ctx->lock);
+ 	sfe_ctx->ipv4_stats_sync_data = app_data;
+-
++	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, one_rule_cb);
++	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, many_rules_cb);
++	rcu_assign_pointer(sfe_ctx->ipv4_generation, generation);
+ 	spin_unlock_bh(&sfe_ctx->lock);
+ 
++	/* Expose core wrappers only after the private generation is complete. */
++	if (one_rule_cb) {
++		sfe_ipv4_register_sync_rule_callback(sfe_ipv4_stats_one_sync_callback);
++	}
++	if (many_rules_cb) {
++		sfe_ipv4_register_many_sync_callback(sfe_ipv4_stats_many_sync_callback);
++	}
++	mutex_unlock(&sfe_ipv4_callback_mutex);
++
+ 	return SFE_CTX_TO_PUBLIC(sfe_ctx);
+ }
+ EXPORT_SYMBOL(sfe_ipv4_notify_register);
+@@ -1447,6 +1657,18 @@
+ void sfe_ipv4_notify_unregister(void)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_callback_generation *generation;
++	bool in_delivery;
++
++	/* IPv4 and IPv6 callbacks share this response worker. */
++	in_delivery = current_work() == &sfe_ctx->work;
++	if (in_delivery) {
++		if (!mutex_trylock(&sfe_ipv4_callback_mutex)) {
++			return;
++		}
++	} else {
++		mutex_lock(&sfe_ipv4_callback_mutex);
++	}
+ 
+ 	/*
+ 	 * The race condition may occur:
+@@ -1455,31 +1677,24 @@
+ 	 * 3. SFE delayed work calls ipv4_stats_sync_cb if ipv4_stats_sync_cb is not NULL.
+ 	 * To eliminate the race condition, we should cancel SFE delayed work first.
+ 	 */
+-	sfe_ipv4_cancel_delayed_work_sync();
+-
+-	spin_lock_bh(&sfe_ctx->lock);
+-
+-	/*
+-	 * Unregister our single rule msg sync callback.
+-	 */
+-	if (sfe_ctx->ipv4_stats_sync_cb) {
+-		sfe_ipv4_register_sync_rule_callback(NULL);
+-		rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, NULL);
++	generation = sfe_ipv4_unpublish_generation(sfe_ctx);
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
++	if (generation && sfe_ipv4_current_delivery(sfe_ctx, generation)) {
++		generation->deferred_free = true;
++		sfe_callback_generation_put(generation);
++		return;
+ 	}
+-
+-	/*
+-	 * Unregister our many rule msg sync callback.
+-	 */
+-	if (sfe_ctx->ipv4_stats_sync_many_cb) {
+-		sfe_ipv4_register_many_sync_callback(NULL);
+-		rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, NULL);
++	if (current_work() != &sfe_ctx->work) {
++		cancel_work_sync(&sfe_ctx->work);
+ 	}
+-
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
++	spin_lock_bh(&sfe_ctx->lock);
++	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_cb, NULL);
++	rcu_assign_pointer(sfe_ctx->ipv4_stats_sync_many_cb, NULL);
+ 	sfe_ctx->ipv4_stats_sync_data = NULL;
+-
+ 	spin_unlock_bh(&sfe_ctx->lock);
+-
+-	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
++	sfe_callback_generation_put(generation);
++	mutex_unlock(&sfe_ipv4_callback_mutex);
+ 	return;
+ }
+ EXPORT_SYMBOL(sfe_ipv4_notify_unregister);
+@@ -1491,17 +1706,35 @@
+ static void sfe_ipv6_many_stats_sync_callback(struct sfe_ipv6_msg *msg)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
+-	sfe_ipv6_msg_callback_t sync_cb;
++	struct sfe_callback_generation *generation;
++	struct sfe_response_msg *response;
++	size_t size;
+ 
+ 	rcu_read_lock();
+-	sync_cb = rcu_dereference(sfe_ctx->ipv6_stats_sync_many_cb);
+-	rcu_read_unlock();
+-	if (!sync_cb) {
+-		sfe_incr_exceptions(SFE_EXCEPTION_NO_SYNC_CB);
++	generation = rcu_dereference(sfe_ctx->ipv6_generation);
++	if (!generation || !generation->ipv6_many_cb ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+-	sync_cb(sfe_ctx->ipv6_stats_sync_data, msg);
++	size = offsetof(struct sfe_ipv6_msg, msg.conn_stats_many.conn_sync) +
++		(size_t)msg->msg.conn_stats_many.count * sizeof(struct sfe_ipv6_conn_sync);
++	if (size > PAGE_SIZE) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
++		return;
++	}
++
++	response = sfe_alloc_response_msg_size(SFE_MSG_TYPE_IPV6, msg, size,
++						       generation, SFE_CALLBACK_DELIVERY_MANY);
++	if (!response) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
++		return;
++	}
++	sfe_enqueue_msg(sfe_ctx, response);
++	rcu_read_unlock();
+ }
+ 
+ /*
+@@ -1764,23 +1997,27 @@
+ static void sfe_ipv6_stats_sync_callback(struct sfe_connection_sync *sis)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_response_msg *response;
++	struct sfe_callback_generation *generation;
+ 	struct sfe_ipv6_msg *msg;
+ 	struct sfe_ipv6_conn_sync *sync_msg;
+-	sfe_ipv6_msg_callback_t sync_cb;
+ 
+ 	rcu_read_lock();
+-	sync_cb = rcu_dereference(sfe_ctx->ipv6_stats_sync_cb);
+-	rcu_read_unlock();
+-	if (!sync_cb) {
+-		sfe_incr_exceptions(SFE_EXCEPTION_NO_SYNC_CB);
++	generation = rcu_dereference(sfe_ctx->ipv6_generation);
++	if (!generation || !generation->ipv6_one_cb ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
+ 		return;
+ 	}
+ 
+-	msg = kzalloc(sizeof(struct sfe_ipv6_msg), GFP_ATOMIC);
+-	if (!msg) {
+-		DEBUG_ERROR("Can't allocate the sync msg\n");
++	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV6, NULL, generation);
++	if (!response) {
++		rcu_read_unlock();
++		sfe_callback_generation_put(generation);
+ 		return;
+ 	}
++	response->delivery_type = SFE_CALLBACK_DELIVERY_ONE;
++	msg = (struct sfe_ipv6_msg *)response->msg;
+ 
+ 	sync_msg = &msg->msg.conn_stats;
+ 
+@@ -1788,13 +2025,8 @@
+ 			sizeof(struct sfe_ipv6_conn_sync), NULL, NULL);
+ 
+ 	sfe_ipv6_stats_convert(sync_msg, sis);
+-
+-	/*
+-	 * SFE sync calling is excuted in a timer, so we can redirect it to ECM directly.
+-	 */
+-	sync_cb(sfe_ctx->ipv6_stats_sync_data, msg);
+-
+-	kfree(msg);
++	sfe_enqueue_msg(sfe_ctx, response);
++	rcu_read_unlock();
+ }
+ 
+ /*
+@@ -2079,16 +2311,35 @@
+ sfe_tx_status_t sfe_ipv6_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_ipv6_msg *msg)
+ {
+ 	struct sfe_response_msg *response;
++	struct sfe_callback_generation *generation;
+ 	enum sfe_cmn_response ret;
++	sfe_tx_status_t status;
+ 
++	rcu_read_lock();
++	generation = rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv6_generation);
+ 	if (msg->cm.type == SFE_TX_CONN_STATS_SYNC_MANY_MSG) {
+-		return sfe_sync_ipv6_stats_many_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), msg);
++		if (!generation || !rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv6_stats_sync_many_cb)) {
++			rcu_read_unlock();
++			return SFE_TX_FAILURE_NOT_ENABLED;
++		}
++
++		status = sfe_sync_ipv6_stats_many_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), msg);
++		rcu_read_unlock();
++		return status;
+ 	}
+ 
+-	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV6, msg);
++	if (!generation || !rcu_dereference((SFE_CTX_TO_PRIVATE(sfe_ctx))->ipv6_stats_sync_cb) ||
++	    !refcount_inc_not_zero(&generation->refs)) {
++		rcu_read_unlock();
++		return SFE_TX_FAILURE_NOT_ENABLED;
++	}
++
++	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV6, msg, generation);
+ 	if (!response) {
+ 		sfe_incr_exceptions(SFE_EXCEPTION_ENQUEUE_FAILED);
+ 		msg->cm.error = SFE_RET_EXCEPTION_ENQUEUE_FAILED;
++		sfe_callback_generation_put(generation);
++		rcu_read_unlock();
+ 		return SFE_TX_FAILURE_QUEUE;
+ 	}
+ 
+@@ -2096,11 +2347,14 @@
+ 	if (ret == SFE_CMN_RESPONSE_EMSG) {
+ 		sfe_incr_exceptions(SFE_EXCEPTION_IPV6_MSG_UNKNOW);
+ 		kfree(response);
++		sfe_callback_generation_put(generation);
++		rcu_read_unlock();
+ 		return SFE_TX_FAILURE_NOT_ENABLED;
+ 	}
+ 
+ 	((struct sfe_ipv6_msg *)response->msg)->cm.response = msg->cm.response = ret;
+ 	sfe_enqueue_msg(SFE_CTX_TO_PRIVATE(sfe_ctx), response);
++	rcu_read_unlock();
+ 	return SFE_TX_SUCCESS;
+ }
+ EXPORT_SYMBOL(sfe_ipv6_tx);
+@@ -2153,6 +2407,31 @@
+ }
+ EXPORT_SYMBOL(sfe_ipv6_max_conn_count);
+ 
++static struct sfe_callback_generation *sfe_ipv6_unpublish_generation(
++		struct sfe_ctx_instance_internal *sfe_ctx)
++{
++	struct sfe_callback_generation *generation;
++
++	sfe_ipv6_register_sync_rule_callback(NULL);
++	sfe_ipv6_register_many_sync_callback(NULL);
++	spin_lock_bh(&sfe_ctx->lock);
++	generation = rcu_dereference_protected(sfe_ctx->ipv6_generation,
++						lockdep_is_held(&sfe_ctx->lock));
++	rcu_assign_pointer(sfe_ctx->ipv6_generation, NULL);
++	spin_unlock_bh(&sfe_ctx->lock);
++	synchronize_rcu();
++	sfe_ipv6_cancel_delayed_work_sync();
++	return generation;
++}
++
++static bool sfe_ipv6_current_delivery(struct sfe_ctx_instance_internal *sfe_ctx,
++					      struct sfe_callback_generation *generation)
++{
++	return current_work() == &sfe_ctx->work &&
++		READ_ONCE(sfe_ctx->delivery_type) == SFE_MSG_TYPE_IPV6 &&
++		READ_ONCE(sfe_ctx->delivery_generation) == generation;
++}
++
+ /*
+  * sfe_ipv6_notify_register()
+  *	Register a notifier callback for IPv6 messages from SFE
+@@ -2167,25 +2446,55 @@
+ 		sfe_ipv6_msg_callback_t many_rule_cb, void *app_data)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_callback_generation *generation;
++	struct sfe_callback_generation *old_generation;
+ 
+-	spin_lock_bh(&sfe_ctx->lock);
+-	/*
+-	 * Hook the shortcut sync callback.
+-	 */
+-	if (one_rule_cb && !sfe_ctx->ipv6_stats_sync_cb) {
+-		sfe_ipv6_register_sync_rule_callback(sfe_ipv6_stats_sync_callback);
+-	}
+-	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, one_rule_cb);
++	if (WARN_ON_ONCE(current_work() == &sfe_ctx->work))
++		return NULL;
++
++	mutex_lock(&sfe_ipv6_callback_mutex);
++	generation = kzalloc(sizeof(*generation), GFP_KERNEL);
++	if (!generation) {
++		mutex_unlock(&sfe_ipv6_callback_mutex);
++		return NULL;
++	}
++	refcount_set(&generation->refs, 1);
++	generation->type = SFE_MSG_TYPE_IPV6;
++	generation->ipv6_one_cb = one_rule_cb;
++	generation->ipv6_many_cb = many_rule_cb;
++	generation->app_data = app_data;
+ 
+-	if (many_rule_cb && !sfe_ctx->ipv6_stats_sync_many_cb) {
+-		sfe_ipv6_register_many_sync_callback(sfe_ipv6_many_stats_sync_callback);
++	old_generation = sfe_ipv6_unpublish_generation(sfe_ctx);
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
++	if (current_work() != &sfe_ctx->work) {
++		cancel_work_sync(&sfe_ctx->work);
++	}
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
++	if (old_generation) {
++		spin_lock_bh(&sfe_ctx->lock);
++		rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, NULL);
++		rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, NULL);
++		sfe_ctx->ipv6_stats_sync_data = NULL;
++		spin_unlock_bh(&sfe_ctx->lock);
++		sfe_callback_generation_put(old_generation);
+ 	}
+-	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, many_rule_cb);
+ 
++	spin_lock_bh(&sfe_ctx->lock);
+ 	sfe_ctx->ipv6_stats_sync_data = app_data;
+-
++	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, one_rule_cb);
++	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, many_rule_cb);
++	rcu_assign_pointer(sfe_ctx->ipv6_generation, generation);
+ 	spin_unlock_bh(&sfe_ctx->lock);
+ 
++	/* Expose core wrappers only after the private generation is complete. */
++	if (one_rule_cb) {
++		sfe_ipv6_register_sync_rule_callback(sfe_ipv6_stats_sync_callback);
++	}
++	if (many_rule_cb) {
++		sfe_ipv6_register_many_sync_callback(sfe_ipv6_many_stats_sync_callback);
++	}
++	mutex_unlock(&sfe_ipv6_callback_mutex);
++
+ 	return SFE_CTX_TO_PUBLIC(sfe_ctx);
+ }
+ EXPORT_SYMBOL(sfe_ipv6_notify_register);
+@@ -2197,6 +2509,18 @@
+ void sfe_ipv6_notify_unregister(void)
+ {
+ 	struct sfe_ctx_instance_internal *sfe_ctx = &__sfe_ctx;
++	struct sfe_callback_generation *generation;
++	bool in_delivery;
++
++	/* IPv4 and IPv6 callbacks share this response worker. */
++	in_delivery = current_work() == &sfe_ctx->work;
++	if (in_delivery) {
++		if (!mutex_trylock(&sfe_ipv6_callback_mutex)) {
++			return;
++		}
++	} else {
++		mutex_lock(&sfe_ipv6_callback_mutex);
++	}
+ 
+ 	/*
+ 	 * The race condition may occur:
+@@ -2205,26 +2529,24 @@
+ 	 * 3. SFE delayed work calls ipv6_stats_sync_cb if ipv6_stats_sync_cb is not NULL.
+ 	 * To eliminate the race condition, we should cancel SFE delayed work first.
+ 	 */
+-	sfe_ipv6_cancel_delayed_work_sync();
+-
+-	spin_lock_bh(&sfe_ctx->lock);
+-	/*
+-	 * Unregister our sync callback.
+-	 */
+-	if (sfe_ctx->ipv6_stats_sync_cb) {
+-		sfe_ipv6_register_sync_rule_callback(NULL);
+-		rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, NULL);
++	generation = sfe_ipv6_unpublish_generation(sfe_ctx);
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
++	if (generation && sfe_ipv6_current_delivery(sfe_ctx, generation)) {
++		generation->deferred_free = true;
++		sfe_callback_generation_put(generation);
++		return;
+ 	}
+-
+-	if (sfe_ctx->ipv6_stats_sync_many_cb) {
+-		sfe_ipv6_register_many_sync_callback(NULL);
+-		rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, NULL);
++	if (current_work() != &sfe_ctx->work) {
++		cancel_work_sync(&sfe_ctx->work);
+ 	}
+-
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
++	spin_lock_bh(&sfe_ctx->lock);
++	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_cb, NULL);
++	rcu_assign_pointer(sfe_ctx->ipv6_stats_sync_many_cb, NULL);
+ 	sfe_ctx->ipv6_stats_sync_data = NULL;
+ 	spin_unlock_bh(&sfe_ctx->lock);
+-
+-	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
++	sfe_callback_generation_put(generation);
++	mutex_unlock(&sfe_ipv6_callback_mutex);
+ 	return;
+ }
+ EXPORT_SYMBOL(sfe_ipv6_notify_unregister);
+@@ -2899,21 +3221,30 @@
+ #endif
+ 
+ 	/*
+-	 * Wait for all callbacks to complete.
++	 * Wait for receive-side callbacks to complete.
+ 	 */
+-	rcu_barrier();
++	synchronize_rcu();
+ 
+ 	/*
+-	 * Destroy all connections.
++	 * Destroy all connections and drain their queued RCU frees.
+ 	 */
+ 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
+ 	sfe_ipv6_destroy_all_rules_for_dev(NULL);
++	rcu_barrier();
+ 
+ 	/*
+ 	 * stop work queue, and flush all pending message in queue
+ 	 */
+ 	cancel_work_sync(&sfe_ctx->work);
+-	sfe_process_response_msg(&sfe_ctx->work);
++
++	/*
++	 * Do not invoke ECM response callbacks during module teardown.  The
++	 * normal worker is quota-limited and can reschedule itself when more
++	 * than two messages remain, so calling it here can queue module work
++	 * after cancel_work_sync() has returned.
++	 */
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV4);
++	sfe_clean_response_msg_by_type(sfe_ctx, SFE_MSG_TYPE_IPV6);
+ 
+ 	/*
+ 	 * Unregister our sync callback.

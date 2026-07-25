@@ -6,41 +6,83 @@ Subject: [PATCH 1/7] luci-app-firewall: add nft-fullcone and bcm-fullcone
 
 Signed-off-by: sbwml <admin@cooluc.com>
 ---
- .../resources/view/firewall/zones.js          | 21 +++++++++++++++++++
- 1 file changed, 21 insertions(+)
+ .../resources/view/firewall/zones.js          | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
 
-diff --git a/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js b/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
-index 129d290e5c..4675a44efd 100644
 --- a/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
 +++ b/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js
-@@ -56,6 +56,27 @@ return view.extend({
+@@ -39,40 +39,72 @@
+ 		s = m.section(form.TypedSection, 'defaults', _('General Settings'));
+ 		s.anonymous = true;
+ 		s.addremove = false;
+ 
+ 		o = s.option(form.Flag, 'synflood_protect', _('Enable SYN-flood protection'));
+ 		o.cfgvalue = function(section_id) {
+ 			const val = uci.get('firewall', section_id, 'synflood_protect');
+ 			return (val != null) ? val : uci.get('firewall', section_id, 'syn_flood');
+ 		};
+ 		o.write = function(section_id, value) {
+ 			uci.unset('firewall', section_id, 'syn_flood');
+ 			uci.set('firewall', section_id, 'synflood_protect', value);
+ 		};
+ 		o.remove = function(section_id) {
+ 			uci.unset('firewall', section_id, 'syn_flood');
+ 			uci.unset('firewall', section_id, 'synflood_protect');
+ 		};
  
  		o = s.option(form.Flag, 'drop_invalid', _('Drop invalid packets'));
  
 +		/* Netfilter FullCone NAT support */
 +
 +		if (L.hasSystemFeature('fullcone')) {
++			function wan_zone_id() {
++				var zones = uci.sections('firewall', 'zone');
++				var wan = zones.filter(function(zone) { return zone.name === 'wan'; })[0];
++				return wan ? wan['.name'] : null;
++			}
++
 +			o = s.option(form.RichListValue, "fullcone_type", _("Full Cone NAT"));
 +			o.value('0', _("Disable"));
 +			o.value('1', _("Nftables Fullcone nat"), _('Nftables based fullcone nat scheme.'));
 +			o.value('2', _("Broadcom Fullcone nat"), _('Broadcom based fullcone nat scheme.'));
 +			o.optional = false;
 +			o.load = function (section_id) {
++				var wan = wan_zone_id();
 +				var fullcone = uci.get('firewall', section_id, 'fullcone');
++				var fullcone4 = wan ? uci.get('firewall', wan, 'fullcone4') : null;
 +				var brcmfullcone = uci.get('firewall', section_id, 'brcmfullcone');
-+				return (fullcone === '1')
++				return (fullcone === '1' && fullcone4 === '1')
 +					? (brcmfullcone === '1' ? '2' : '1')
 +					: '0';
 +			};
 +			o.write = function(section_id, value) {
++				var wan = wan_zone_id();
 +				uci.set('firewall', section_id, 'fullcone', value === '0' ? null : '1');
 +				uci.set('firewall', section_id, 'brcmfullcone', value === '2' ? '1' : null);
++				if (wan)
++					uci.set('firewall', wan, 'fullcone4', value === '0' ? '0' : '1');
 +			};
 +		}
 +
  		let p = [
  			s.option(form.ListValue, 'input', _('Input')),
  			s.option(form.ListValue, 'output', _('Output')),
+ 			s.option(form.ListValue, 'forward', _('Forward'))
+ 		];
+ 
+ 		for (let popt of p) {
+ 			popt.value('REJECT', _('reject'));
+ 			popt.value('DROP', _('drop'));
+ 			popt.value('ACCEPT', _('accept'));
+ 		}
+ 
+ 		/* Netfilter flow offload support */
+ 
+ 		if (L.hasSystemFeature('offloading')) {
+ 			s = m.section(form.TypedSection, 'defaults', _('Routing/NAT Offloading'),
+ 				_('Not fully compatible with QoS/SQM.'));
+ 
+ 			s.anonymous = true;
+ 			s.addremove = false;
 -- 
 2.43.5
-

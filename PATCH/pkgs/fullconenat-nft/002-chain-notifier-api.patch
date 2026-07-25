@@ -1,0 +1,90 @@
+--- a/src/nft_ext_fullcone.c
++++ b/src/nft_ext_fullcone.c
+@@ -21,6 +21,7 @@
+ #include <linux/netfilter/nf_tables.h>
+ #include <net/netfilter/nf_tables.h>
+ #include <net/netfilter/nf_nat.h>
++#include <net/net_namespace.h>
+ 
+ #include <linux/workqueue.h>
+ 
+@@ -144,7 +147,13 @@
+ 	int err;
+ 	int register_ct_notifier_ret = 0;
++	int register_ct_notifier_attempted = 1;
+ 
++	if (ctx->net != &init_net)
++		return -EOPNOTSUPP;
++
+ 	err = nf_ct_netns_get(ctx->net, ctx->family);
++	if (err)
++		return err;
+ 
+ 	mutex_lock(&nf_ct_net_event_lock);
+ 
+@@ -162,11 +172,16 @@
+ 		ct_event_notifier.fcn = ct_event_cb;
+ #endif
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) && !defined(CONFIG_NF_CONNTRACK_CHAIN_EVENTS)
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++		register_ct_notifier_ret = nf_conntrack_register_chain_notifier(ctx->net, &ct_event_notifier);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+-		if (!READ_ONCE(ctx->net->ct.nf_conntrack_event_cb)) {
+-			nf_conntrack_register_notifier(ctx->net, &ct_event_notifier);
+-		}
++		if (READ_ONCE(ctx->net->ct.nf_conntrack_event_cb)) {
++			register_ct_notifier_attempted = 0;
++		} else {
++			register_ct_notifier_ret = nf_conntrack_register_notifier(ctx->net,
++									 &ct_event_notifier);
++		}
+ #else
+ 		register_ct_notifier_ret = nf_conntrack_register_notifier(ctx->net, &ct_event_notifier);
+ #endif
+ 
+@@ -172,9 +177,11 @@
+ 
+-		if (register_ct_notifier_ret) {
+-			/* non-zero means failure */
+-			pr_warn("failed to register a conntrack notifier. Disable active GC for mappings.\n");
+-		} else {
+-			ct_event_notifier_registered = 1;
+-			pr_debug("nft_fullcone_init(): ct_event_notifier registered\n");
+-		}
++		if (register_ct_notifier_attempted) {
++			if (register_ct_notifier_ret) {
++				/* non-zero means failure */
++				pr_warn("failed to register a conntrack notifier. Disable active GC for mappings.\n");
++			} else {
++				ct_event_notifier_registered = 1;
++				pr_debug("nft_fullcone_init(): ct_event_notifier registered\n");
++			}
++		}
+ 
+@@ -246,6 +258,10 @@
+ 
+ static void nft_fullcone_common_destory(const struct nft_ctx *ctx)
+ {
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++	int unregister_ct_notifier_ret;
++#endif
++
+ 	mutex_lock(&nf_ct_net_event_lock);
+ 
+ 	module_refer_count--;
+@@ -254,7 +270,13 @@
+ 
+ 	if (module_refer_count == 0) {
+ 		if (ct_event_notifier_registered) {
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) && !defined(CONFIG_NF_CONNTRACK_CHAIN_EVENTS)
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
++			unregister_ct_notifier_ret = nf_conntrack_unregister_chain_notifier(ctx->net,
++										 &ct_event_notifier);
++			if (unregister_ct_notifier_ret && unregister_ct_notifier_ret != -ENOENT)
++				pr_warn("failed to unregister conntrack notifier: %d\n",
++					unregister_ct_notifier_ret);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+ 			nf_conntrack_unregister_notifier(ctx->net);
+ #else
+ 			nf_conntrack_unregister_notifier(ctx->net, &ct_event_notifier);

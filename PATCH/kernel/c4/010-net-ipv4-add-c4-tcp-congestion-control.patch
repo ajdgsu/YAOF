@@ -1,0 +1,907 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: YAOF Patchstack <patchstack@local>
+Date: Fri, 24 Jul 2026 12:00:00 +0800
+Subject: [PATCH] net: ipv4: add C4 TCP congestion control
+
+Add the final C4 TCP congestion controller to vanilla Linux 6.12.94 while
+preserving CUBIC as the global default unless a target selects DEFAULT_C4.
+The patch consolidates the C4 evolution layers from c301 through c313.
+It keeps only the Linux networking changes required by the OpenWrt
+integration.
+
+Provenance:
+Final source: redmi_k90pmax_kernel/work/android-kernel/common/net/ipv4/tcp_c4.c
+  Final source SHA-256: aaf87b9c92c46d0624ce48e45b1d945b04c1250b4c1567b9bea7fa4096bcfee5
+  Evolution base revision: 82efd98459a2779ae85cb9ee55f9e7b61a31bf7a
+  C4 source derivation revision: 879e7ef0f773d07f47926dc8ba3d86cc5e36f039
+Evolution metadata: redmi_k90pmax_kernel/c4-patchset.toml
+
+Signed-off-by: YAOF Patchstack <patchstack@local>
+---
+--- a/include/net/inet_connection_sock.h
++++ b/include/net/inet_connection_sock.h
+@@ -138,7 +138,7 @@
+ 	u32			  icsk_probes_tstamp;
+ 	u32			  icsk_user_timeout;
+ 
+-	u64			  icsk_ca_priv[104 / sizeof(u64)];
++	u64			  icsk_ca_priv[144 / sizeof(u64)];
+ #define ICSK_CA_PRIV_SIZE	  sizeof_field(struct inet_connection_sock, icsk_ca_priv)
+ };
+ 
+--- a/net/ipv4/Kconfig
++++ b/net/ipv4/Kconfig
+@@ -716,12 +716,24 @@
+ 	config DEFAULT_BBR
+ 		bool "BBR" if TCP_CONG_BBR=y
+ 
++	config DEFAULT_C4
++		bool "C4" if TCP_CONG_C4=y
++
+ 	config DEFAULT_RENO
+ 		bool "Reno"
+ endchoice
+ 
+ endif
+ 
++config TCP_CONG_C4
++	tristate "C4 TCP"
++	default n
++	help
++	  Experimental TCP adaptation of the picoquic C4 congestion
++	  controller. C4 uses packet-timed rounds, pacing, delay, ECN, and
++	  loss feedback to adjust its sending rate while relying on the Linux
++	  TCP recovery path. CUBIC remains the default congestion controller.
++
+ config TCP_CONG_CUBIC
+ 	tristate
+ 	depends on !TCP_CONG_ADVANCED
+@@ -739,6 +751,7 @@
+ 	default "reno" if DEFAULT_RENO
+ 	default "dctcp" if DEFAULT_DCTCP
+ 	default "cdg" if DEFAULT_CDG
++	default "c4" if DEFAULT_C4
+ 	default "bbr" if DEFAULT_BBR
+ 	default "cubic"
+ 
+--- a/net/ipv4/Makefile
++++ b/net/ipv4/Makefile
+@@ -45,6 +45,7 @@
+ obj-$(CONFIG_INET_UDP_DIAG) += udp_diag.o
+ obj-$(CONFIG_INET_RAW_DIAG) += raw_diag.o
+ obj-$(CONFIG_TCP_CONG_BBR) += tcp_bbr.o
++obj-$(CONFIG_TCP_CONG_C4) += tcp_c4.o
+ obj-$(CONFIG_TCP_CONG_BIC) += tcp_bic.o
+ obj-$(CONFIG_TCP_CONG_CDG) += tcp_cdg.o
+ obj-$(CONFIG_TCP_CONG_CUBIC) += tcp_cubic.o
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -3325,6 +3325,9 @@
+ 	WRITE_ONCE(tp->urg_data, 0);
+ 	sk_set_peek_off(sk, -1);
+ 	tcp_write_queue_purge(sk);
++	tp->tcp_wstamp_ns = tcp_clock_ns();
++	WRITE_ONCE(sk->sk_pacing_rate,
++		   READ_ONCE(sk->sk_max_pacing_rate));
+ 	tcp_fastopen_active_disable_ofo_check(sk);
+ 	skb_rbtree_purge(&tp->out_of_order_queue);
+ 
+--- /dev/null
++++ b/net/ipv4/tcp_c4.c
+@@ -0,0 +1,816 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR ISC
++/*
++ * TCP C4 congestion control, native Linux v0 port.
++ *
++ * Derived from picoquic C4, commit 879e7ef0f773d07f47926dc8ba3d86cc5e36f039.
++ *
++ * Author: Christian Huitema
++ * Copyright (c) 2025, Private Octopus, Inc.
++ * All rights reserved.
++ *
++ * Permission to use, copy, modify, and distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ * DISCLAIMED. IN NO EVENT SHALL Private Octopus, Inc. BE LIABLE FOR ANY
++ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
++ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ * This is deliberately not a line-for-line port.  The Linux adaptation uses
++ * rate_sample packet accounting, packet-timed rounds, TCP's PRR/RACK recovery,
++ * integer Q10/Q16 control values, kernel pacing, and uncompressed inline state
++ * within the 144-byte congestion-control private area.  Resuming and seed-cwnd
++ * support, picoquic allocation/logging/options, and ECT(1)/L4S handling are
++ * intentionally omitted.  Standard TCP ECN feedback is used when negotiated,
++ * but is not required.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/math64.h>
++#include <net/tcp.h>
++
++#define C4_Q10			1024U
++#define C4_GAIN_INITIAL	2048U
++#define C4_GAIN_RECOVERY	960U
++#define C4_GAIN_RECOVERY2	896U
++#define C4_GAIN_CRUISE		1024U
++#define C4_GAIN_PROBE		1088U
++#define C4_GAIN_PUSH		1256U
++#define C4_LOSS_BETA_Q10	256U
++#define C4_ECN_MIN_BETA_Q10	64U
++#ifdef MODULE
++#define C4_FLAG_SND_UNA_ADVANCED	0x400
++#endif
++#define C4_ECN_SHIFT		4U
++#define C4_LOSS_SHIFT		4U
++#define C4_MIN_RTT_US		1000U
++#define C4_MAX_JITTER_US	250000U
++#define C4_MAX_DELAY_US	25000U
++#define C4_CRUISE_ROUNDS	2U
++
++#define C4_STATE_CWR_PENDING	0x01
++#define C4_STATE_CWR_LOSS	0x02
++#define C4_STATE_DEFER_REAPPLY	0x04
++#define C4_STATE_UNDO_OBSERVED	0x08
++#define C4_STATE_UNDO_VALID	0x10
++#define C4_STATE_RTT_DELAYED_BASE	0x20
++
++enum c4_mode {
++	C4_INITIAL,
++	C4_RECOVERY,
++	C4_CRUISING,
++	C4_PROBING,
++	C4_PUSHING,
++};
++
++enum c4_congestion {
++	C4_CONGESTION_DELAY,
++	C4_CONGESTION_ECN,
++	C4_CONGESTION_LOSS,
++};
++
++/* 144-byte uncompressed Linux state, inline and pointer-free. */
++struct c4 {
++	u64 nominal_rate;		/* bytes per second */
++	u64 prior_rate;
++	u64 round_peak_rate;		/* non-app-limited peak, bytes per second */
++	u64 undo_nominal_rate;
++	u64 undo_prior_rate;
++	u32 next_round_delivered;
++	u32 initial_cwnd;
++	u32 old_delivered;
++	u32 old_delivered_ce;
++	u32 old_lost;
++	u32 min_rtt_us;
++	u32 max_rtt_us;
++	u32 era_min_rtt_us;
++	u32 era_max_rtt_us;
++	u32 loss_ewma_q16;
++	u32 ecn_alpha_q10;
++	u32 undo_loss_ewma_q16;
++	u32 undo_ecn_alpha_q10;
++	u32 undo_gain_q10;
++	u32 undo_mode;
++	u32 undo_cruise_rounds;
++	u32 undo_rounds_without_growth;
++	u32 undo_probe_succeeded;
++	u32 undo_low_rate_rounds;
++	u32 gain_q10;
++	u32 mode;
++	u32 cruise_rounds;
++	u32 rounds_without_growth;
++	u32 probe_succeeded;
++	u32 low_rate_rounds;
++	u32 state_flags;
++};
++
++static struct c4 *c4_ca(const struct sock *sk)
++{
++	return inet_csk_ca(sk);
++}
++
++static u32 c4_sensitivity_for_rate(u64 nominal_rate)
++{
++	if (nominal_rate < 50000)
++		return 0;
++	if (nominal_rate > 10000000)
++		return C4_Q10;
++	if (nominal_rate < 1000000)
++		return div64_u64((nominal_rate - 50000) * 963, 950000);
++	return 963 + div64_u64((nominal_rate - 1000000) * 61, 9000000);
++}
++
++static void c4_set_nominal_rate(struct c4 *ca, u64 nominal_rate)
++{
++	ca->nominal_rate = nominal_rate;
++}
++
++static u32 c4_delay_threshold(const struct c4 *ca, u32 sensitivity)
++{
++	u32 fraction = 64 + ((C4_Q10 - sensitivity) * 196 >> 10);
++	u64 delay = (u64)fraction * ca->max_rtt_us >> 10;
++
++	return min_t(u64, delay, C4_MAX_DELAY_US);
++}
++
++static u32 c4_ecn_threshold(u32 sensitivity)
++{
++	return 192 - (sensitivity * 96 >> 10);
++}
++
++static u32 c4_loss_threshold_q16(u32 sensitivity)
++{
++	/* 2% at full sensitivity, increasing to 52% at zero sensitivity. */
++	return 1311U + (((C4_Q10 - sensitivity) * 32768U) >> 10);
++}
++
++static void c4_reset_era(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	ca->next_round_delivered = tp->delivered;
++	ca->round_peak_rate = 0;
++	ca->era_min_rtt_us = U32_MAX;
++	ca->era_max_rtt_us = 0;
++}
++
++static void c4_enter(struct sock *sk, enum c4_mode mode)
++{
++	struct c4 *ca = c4_ca(sk);
++
++	ca->mode = mode;
++	switch (mode) {
++	case C4_INITIAL:
++		ca->gain_q10 = C4_GAIN_INITIAL;
++		ca->rounds_without_growth = 0;
++		ca->initial_cwnd = tcp_snd_cwnd(tcp_sk(sk));
++		break;
++	case C4_RECOVERY:
++		ca->gain_q10 = C4_GAIN_RECOVERY;
++		break;
++	case C4_CRUISING:
++		ca->gain_q10 = C4_GAIN_CRUISE;
++		ca->cruise_rounds = C4_CRUISE_ROUNDS;
++		break;
++	case C4_PROBING:
++		ca->gain_q10 = C4_GAIN_PROBE;
++		ca->prior_rate = ca->nominal_rate;
++		break;
++	case C4_PUSHING:
++		ca->gain_q10 = C4_GAIN_PUSH;
++		ca->prior_rate = ca->nominal_rate;
++		break;
++	}
++	c4_reset_era(sk);
++}
++
++static u64 c4_sample_rate(const struct tcp_sock *tp,
++			  const struct rate_sample *rs)
++{
++	u64 rate;
++
++	if (rs->delivered <= 0 || rs->interval_us <= 0)
++		return 0;
++
++	rate = (u64)rs->delivered * max(tp->mss_cache, 1U);
++	return mul_u64_u64_div_u64(rate, USEC_PER_SEC, rs->interval_us);
++}
++
++static bool c4_rtt_sample_usable(const struct c4 *ca,
++				 const struct rate_sample *rs)
++{
++	if (rs->rtt_us <= 0)
++		return false;
++	if (!rs->is_ack_delayed && ca->mode == C4_RECOVERY &&
++	    (ca->state_flags & C4_STATE_RTT_DELAYED_BASE))
++		return false;
++	return !rs->is_ack_delayed ||
++	       (!ca->min_rtt_us && !ca->max_rtt_us &&
++		ca->era_min_rtt_us == U32_MAX);
++}
++
++static void c4_update_rtt(struct c4 *ca, const struct rate_sample *rs)
++{
++	u32 rtt;
++
++	if (!c4_rtt_sample_usable(ca, rs))
++		return;
++	rtt = min_t(u64, (u64)rs->rtt_us, U32_MAX);
++	if (!rs->is_ack_delayed &&
++	    (ca->state_flags & C4_STATE_RTT_DELAYED_BASE)) {
++		ca->min_rtt_us = rtt;
++		ca->max_rtt_us = max(rtt, C4_MIN_RTT_US);
++		ca->era_min_rtt_us = rtt;
++		ca->era_max_rtt_us = rtt;
++		ca->state_flags &= ~C4_STATE_RTT_DELAYED_BASE;
++		return;
++	}
++	if (rs->is_ack_delayed) {
++		ca->min_rtt_us = rtt;
++		ca->max_rtt_us = max(rtt, C4_MIN_RTT_US);
++		ca->state_flags |= C4_STATE_RTT_DELAYED_BASE;
++	}
++	ca->era_min_rtt_us = min(ca->era_min_rtt_us, rtt);
++	ca->era_max_rtt_us = max(ca->era_max_rtt_us, rtt);
++}
++
++static void c4_update_loss(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u32 delivered = tp->delivered - ca->old_delivered;
++	u32 lost = tp->lost - ca->old_lost;
++	u32 sample = 0, packets = delivered + lost;
++
++	if (packets < delivered)
++		packets = U32_MAX;
++	if (lost && packets)
++		sample = div_u64((u64)lost << 16, packets);
++	ca->loss_ewma_q16 -= ca->loss_ewma_q16 >> C4_LOSS_SHIFT;
++	ca->loss_ewma_q16 += sample >> C4_LOSS_SHIFT;
++	ca->old_lost = tp->lost;
++}
++
++static void c4_update_ecn(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u32 delivered = tp->delivered - ca->old_delivered;
++	u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
++	u32 alpha = ca->ecn_alpha_q10;
++	u32 fraction = 0;
++
++	if (delivered && delivered_ce)
++		fraction = min_t(u64,
++				 div_u64((u64)delivered_ce << 10, delivered),
++				 C4_Q10);
++	alpha -= alpha >> C4_ECN_SHIFT;
++	alpha += fraction >> C4_ECN_SHIFT;
++	ca->ecn_alpha_q10 = min(alpha, C4_Q10);
++	ca->old_delivered = tp->delivered;
++	ca->old_delivered_ce = tp->delivered_ce;
++}
++
++static void c4_rebase_stats(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	ca->old_delivered = tp->delivered;
++	ca->old_delivered_ce = tp->delivered_ce;
++	ca->old_lost = tp->lost;
++}
++
++static void c4_snapshot_loss(struct c4 *ca)
++{
++	ca->undo_nominal_rate = ca->nominal_rate;
++	ca->undo_prior_rate = ca->prior_rate;
++	ca->undo_loss_ewma_q16 = ca->loss_ewma_q16;
++	ca->undo_ecn_alpha_q10 = ca->ecn_alpha_q10;
++	ca->undo_gain_q10 = ca->gain_q10;
++	ca->undo_mode = ca->mode;
++	ca->undo_cruise_rounds = ca->cruise_rounds;
++	ca->undo_rounds_without_growth = ca->rounds_without_growth;
++	ca->undo_probe_succeeded = ca->probe_succeeded;
++	ca->undo_low_rate_rounds = ca->low_rate_rounds;
++	ca->state_flags |= C4_STATE_UNDO_VALID;
++}
++
++static bool c4_restore_loss(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++
++	if (!(ca->state_flags & C4_STATE_UNDO_VALID))
++		return false;
++
++	ca->nominal_rate = ca->undo_nominal_rate;
++	ca->prior_rate = ca->undo_prior_rate;
++	ca->loss_ewma_q16 = ca->undo_loss_ewma_q16;
++	ca->ecn_alpha_q10 = ca->undo_ecn_alpha_q10;
++	ca->gain_q10 = ca->undo_gain_q10;
++	ca->mode = ca->undo_mode;
++	ca->cruise_rounds = ca->undo_cruise_rounds;
++	ca->rounds_without_growth = ca->undo_rounds_without_growth;
++	ca->probe_succeeded = ca->undo_probe_succeeded;
++	ca->low_rate_rounds = ca->undo_low_rate_rounds;
++	ca->state_flags &= ~C4_STATE_UNDO_VALID;
++	c4_rebase_stats(sk);
++	c4_reset_era(sk);
++	return true;
++}
++
++static bool c4_rate_is_growing(const struct c4 *ca)
++{
++	u64 target;
++
++	if (!ca->prior_rate)
++		return ca->nominal_rate > 0;
++	if (ca->gain_q10 <= C4_GAIN_PROBE)
++		return ca->nominal_rate > ca->prior_rate;
++	target = ca->prior_rate;
++	target += mul_u64_u32_div(ca->prior_rate,
++				      ca->gain_q10 - C4_Q10, 4 * C4_Q10);
++	return ca->nominal_rate >= target;
++}
++
++static bool c4_finish_round(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	u64 old_nominal_rate = ca->nominal_rate;
++	u64 max_rtt;
++	u32 old_max_rtt = ca->max_rtt_us;
++	u32 old_gain = ca->gain_q10;
++	u32 old_mode = ca->mode;
++	u32 corrected_max;
++	bool app_limited = !ca->round_peak_rate;
++
++	if (ca->mode == C4_RECOVERY) {
++		c4_rebase_stats(sk);
++		ca->loss_ewma_q16 = 0;
++		ca->ecn_alpha_q10 = 0;
++		if (ca->probe_succeeded)
++			c4_enter(sk, C4_PUSHING);
++		else
++			c4_enter(sk, C4_CRUISING);
++		ca->probe_succeeded = 0;
++		return true;
++	}
++
++	if (ca->era_min_rtt_us != U32_MAX) {
++		if (!ca->min_rtt_us || ca->era_min_rtt_us < ca->min_rtt_us)
++			ca->min_rtt_us = ca->era_min_rtt_us;
++		else
++			ca->min_rtt_us = ((u64)7 * ca->min_rtt_us +
++					      ca->era_min_rtt_us) >> 3;
++
++		if (ca->gain_q10 <= C4_Q10 || !ca->max_rtt_us) {
++			max_rtt = (u64)ca->min_rtt_us + C4_MAX_JITTER_US;
++			corrected_max = min_t(u64, ca->era_max_rtt_us, max_rtt);
++			if (ca->max_rtt_us)
++				ca->max_rtt_us = ((u64)7 * ca->max_rtt_us +
++						      corrected_max) >> 3;
++			else
++				ca->max_rtt_us = corrected_max;
++		}
++		ca->max_rtt_us = max(ca->max_rtt_us, C4_MIN_RTT_US);
++	}
++	c4_update_loss(sk);
++	c4_update_ecn(sk);
++
++	switch (ca->mode) {
++	case C4_INITIAL:
++		if (app_limited) {
++			c4_reset_era(sk);
++			break;
++		}
++		if (c4_rate_is_growing(ca))
++			ca->rounds_without_growth = 0;
++		else if (ca->rounds_without_growth < 3)
++			ca->rounds_without_growth++;
++		ca->prior_rate = ca->nominal_rate;
++		if (ca->rounds_without_growth >= 3)
++			c4_enter(sk, C4_RECOVERY);
++		else
++			c4_reset_era(sk);
++		break;
++	case C4_RECOVERY:
++		break;
++	case C4_CRUISING:
++		if (!app_limited && ca->round_peak_rate < ca->nominal_rate) {
++			if (ca->low_rate_rounds != U8_MAX)
++				ca->low_rate_rounds++;
++			if (ca->low_rate_rounds == 1)
++				c4_set_nominal_rate(ca, ca->nominal_rate -
++						((ca->nominal_rate - ca->round_peak_rate) >> 2));
++			else
++				c4_set_nominal_rate(ca, ca->round_peak_rate +
++						((ca->nominal_rate - ca->round_peak_rate) >> 2));
++		} else if (ca->round_peak_rate >= ca->nominal_rate) {
++			ca->low_rate_rounds = 0;
++		}
++		if (!app_limited && ca->cruise_rounds)
++			ca->cruise_rounds--;
++		if (!ca->cruise_rounds)
++			c4_enter(sk, C4_PROBING);
++		else
++			c4_reset_era(sk);
++		break;
++	case C4_PROBING:
++		ca->probe_succeeded = c4_rate_is_growing(ca);
++		c4_enter(sk, C4_RECOVERY);
++		break;
++	case C4_PUSHING:
++		if (!c4_rate_is_growing(ca)) {
++			c4_enter(sk, C4_RECOVERY);
++		} else {
++			ca->prior_rate = ca->nominal_rate;
++			c4_reset_era(sk);
++		}
++		break;
++	}
++	return ca->nominal_rate != old_nominal_rate || ca->gain_q10 != old_gain ||
++	       ca->mode != old_mode ||
++	       (!app_limited && ca->max_rtt_us != old_max_rtt);
++}
++
++static void c4_set_pacing_rate(struct sock *sk);
++
++static void c4_notify_congestion(struct sock *sk, enum c4_congestion event,
++				 u32 excess, u32 sensitivity, bool undoable)
++{
++	struct c4 *ca = c4_ca(sk);
++	u32 beta_q10;
++
++	if (event == C4_CONGESTION_LOSS && undoable)
++		c4_snapshot_loss(ca);
++	else
++		ca->state_flags &= ~C4_STATE_UNDO_VALID;
++
++	ca->probe_succeeded = 0;
++	ca->low_rate_rounds = 0;
++	if (ca->mode == C4_RECOVERY) {
++		ca->gain_q10 = C4_GAIN_RECOVERY2;
++		c4_reset_era(sk);
++		c4_set_pacing_rate(sk);
++		return;
++	}
++
++	switch (event) {
++	case C4_CONGESTION_DELAY:
++		beta_q10 = min_t(u64,
++				 div_u64((u64)excess * C4_Q10,
++					 max(c4_delay_threshold(ca, sensitivity), 1U)),
++				 C4_LOSS_BETA_Q10);
++		break;
++	case C4_CONGESTION_ECN:
++		if (!excess)
++			beta_q10 = C4_ECN_MIN_BETA_Q10;
++		else
++			beta_q10 = min_t(u64,
++					 div_u64((u64)excess * C4_Q10,
++						 max(c4_ecn_threshold(sensitivity), 1U)),
++					 C4_LOSS_BETA_Q10);
++		break;
++	case C4_CONGESTION_LOSS:
++	default:
++		beta_q10 = (C4_LOSS_BETA_Q10 +
++			    ((sensitivity * C4_LOSS_BETA_Q10) >> 10)) >> 1;
++		break;
++	}
++	if (ca->mode == C4_PROBING || ca->mode == C4_PUSHING) {
++		if (ca->prior_rate)
++			c4_set_nominal_rate(ca, ca->prior_rate);
++	} else {
++		c4_set_nominal_rate(ca, ca->nominal_rate -
++				mul_u64_u32_div(ca->nominal_rate, beta_q10, C4_Q10));
++	}
++	c4_enter(sk, C4_RECOVERY);
++	c4_set_pacing_rate(sk);
++}
++
++static void c4_set_pacing_rate(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u64 pace;
++
++	if (!ca->nominal_rate)
++		return;
++	pace = mul_u64_u32_div(ca->nominal_rate, ca->gain_q10, C4_Q10);
++	pace = max_t(u64, pace, max(tp->mss_cache, 1U));
++	pace = min_t(u64, pace, READ_ONCE(sk->sk_max_pacing_rate));
++	if (READ_ONCE(sk->sk_pacing_rate) != pace)
++		WRITE_ONCE(sk->sk_pacing_rate, pace);
++}
++
++static void c4_apply_control(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u64 pace, window, target;
++	u32 rtt, mss = max(tp->mss_cache, 1U);
++
++	if (!ca->nominal_rate)
++		return;
++	c4_set_pacing_rate(sk);
++	pace = READ_ONCE(sk->sk_pacing_rate);
++
++	rtt = max(ca->max_rtt_us, C4_MIN_RTT_US);
++	window = mul_u64_u32_div(pace, rtt, USEC_PER_SEC);
++	if (ca->mode != C4_INITIAL) {
++		u64 margin = mul_u64_u32_div(pace, min(rtt / 4, 15000U),
++					     USEC_PER_SEC);
++
++		window += min(margin, U64_MAX - window);
++	}
++	target = DIV_ROUND_UP_ULL(window, mss);
++	target = clamp_t(u64, target, 2, tp->snd_cwnd_clamp);
++	if (ca->mode == C4_INITIAL) {
++		target = max_t(u64, target, ca->initial_cwnd);
++		target = min_t(u64, target, tp->snd_cwnd_clamp);
++	}
++	if (tcp_snd_cwnd(tp) != target)
++		tcp_snd_cwnd_set(tp, (u32)target);
++}
++
++static void c4_init(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u8 ca_state = inet_csk(sk)->icsk_ca_state;
++	bool recovering = tcp_in_cwnd_reduction(sk) || ca_state == TCP_CA_Loss;
++
++	memset(ca, 0, sizeof(*ca));
++	c4_rebase_stats(sk);
++	ca->initial_cwnd = tcp_snd_cwnd(tp);
++	ca->mode = recovering ? C4_RECOVERY : C4_INITIAL;
++	ca->gain_q10 = recovering ? C4_GAIN_RECOVERY : C4_GAIN_INITIAL;
++	c4_set_nominal_rate(ca, 0);
++	if (!tcp_packets_in_flight(tp))
++		tp->tcp_wstamp_ns = tcp_clock_ns();
++	if (!recovering)
++		tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
++	cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE, SK_PACING_NEEDED);
++	c4_reset_era(sk);
++}
++
++static u32 c4_ssthresh(struct sock *sk)
++{
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	return max(tcp_snd_cwnd(tp) - (tcp_snd_cwnd(tp) >> 2), 2U);
++}
++
++static u32 c4_undo_cwnd(struct sock *sk)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	if (!c4_restore_loss(sk))
++		c4_reset_era(sk);
++	ca->state_flags |= C4_STATE_UNDO_OBSERVED;
++	c4_set_pacing_rate(sk);
++	return max(tcp_snd_cwnd(tp), tp->prior_cwnd);
++}
++
++static void c4_set_state(struct sock *sk, u8 new_state)
++{
++	struct c4 *ca = c4_ca(sk);
++	u8 old_state = inet_csk(sk)->icsk_ca_state;
++
++	if (new_state == old_state)
++		return;
++	if (new_state == TCP_CA_CWR) {
++		ca->state_flags |= C4_STATE_CWR_PENDING;
++		ca->state_flags &= ~(C4_STATE_CWR_LOSS | C4_STATE_UNDO_VALID |
++				     C4_STATE_UNDO_OBSERVED);
++	} else if (new_state == TCP_CA_Recovery) {
++		ca->state_flags &= ~(C4_STATE_CWR_PENDING | C4_STATE_CWR_LOSS |
++				     C4_STATE_UNDO_OBSERVED);
++		c4_notify_congestion(sk, C4_CONGESTION_LOSS, 0,
++				      c4_sensitivity_for_rate(ca->nominal_rate),
++				      tcp_sk(sk)->prior_ssthresh != 0);
++	} else if (new_state == TCP_CA_Loss) {
++		ca->state_flags &= ~(C4_STATE_CWR_PENDING | C4_STATE_CWR_LOSS |
++				     C4_STATE_UNDO_OBSERVED);
++		if (!tcp_sk(sk)->prior_ssthresh)
++			ca->state_flags &= ~C4_STATE_UNDO_VALID;
++	}
++	if (new_state == TCP_CA_Open && old_state >= TCP_CA_CWR) {
++		if (old_state == TCP_CA_CWR &&
++		    (ca->state_flags & C4_STATE_CWR_PENDING))
++			ca->state_flags |= C4_STATE_CWR_LOSS;
++		if (ca->state_flags & C4_STATE_UNDO_OBSERVED) {
++			ca->state_flags &= ~C4_STATE_DEFER_REAPPLY;
++		} else {
++			ca->state_flags |= C4_STATE_DEFER_REAPPLY;
++		}
++	}
++}
++
++static void c4_cwnd_event(struct sock *sk, enum tcp_ca_event event)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++
++	if (event == CA_EVENT_LOSS) {
++		ca->state_flags &= ~C4_STATE_UNDO_OBSERVED;
++		c4_notify_congestion(sk, C4_CONGESTION_LOSS, 0,
++				      c4_sensitivity_for_rate(ca->nominal_rate),
++				      tp->prior_ssthresh != 0);
++	} else if (event == CA_EVENT_CWND_RESTART) {
++		if (!tcp_in_cwnd_reduction(sk))
++			ca->state_flags &= ~C4_STATE_UNDO_VALID;
++		tp->tcp_wstamp_ns = tcp_clock_ns();
++		c4_reset_era(sk);
++		c4_set_pacing_rate(sk);
++	} else if (event == CA_EVENT_TX_START) {
++		if (!tcp_in_cwnd_reduction(sk))
++			ca->state_flags &= ~C4_STATE_UNDO_VALID;
++		c4_reset_era(sk);
++		c4_set_pacing_rate(sk);
++	}
++}
++
++static void c4_cwnd_reduction(struct sock *sk, int newly_acked_sacked,
++			      int newly_lost, int flag)
++{
++#ifdef MODULE
++	struct tcp_sock *tp = tcp_sk(sk);
++	int sndcnt = 0;
++	int delta = tp->snd_ssthresh - tcp_packets_in_flight(tp);
++
++	/* tcp_cwnd_reduction() is not exported to loadable modules. */
++	if (newly_acked_sacked <= 0 || WARN_ON_ONCE(!tp->prior_cwnd))
++		return;
++
++	tp->prr_delivered += newly_acked_sacked;
++	if (delta < 0) {
++		u64 dividend = (u64)tp->snd_ssthresh * tp->prr_delivered +
++			       tp->prior_cwnd - 1;
++
++		sndcnt = div_u64(dividend, tp->prior_cwnd) - tp->prr_out;
++	} else {
++		sndcnt = max_t(int, tp->prr_delivered - tp->prr_out,
++			       newly_acked_sacked);
++		if (flag & C4_FLAG_SND_UNA_ADVANCED && !newly_lost)
++			sndcnt++;
++		sndcnt = min(delta, sndcnt);
++	}
++	sndcnt = max(sndcnt, tp->prr_out ? 0 : 1);
++	tcp_snd_cwnd_set(tp, tcp_packets_in_flight(tp) + sndcnt);
++#else
++	tcp_cwnd_reduction(sk, newly_acked_sacked, newly_lost, flag);
++#endif
++}
++
++static void c4_cong_control(struct sock *sk, u32 ack, int flag,
++			    const struct rate_sample *rs)
++{
++	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u64 sample_rate = 0;
++	u32 sensitivity;
++	bool round_start, control_changed = false, suppress_cwnd;
++	bool recovery_sample = ca->mode == C4_RECOVERY;
++	u32 delay;
++
++	suppress_cwnd = (ca->state_flags & C4_STATE_UNDO_OBSERVED) &&
++			ca->next_round_delivered == tp->delivered;
++	ca->state_flags &= ~C4_STATE_UNDO_OBSERVED;
++
++	if (ca->state_flags & C4_STATE_CWR_PENDING) {
++		u8 cwr_flags = ca->state_flags;
++
++		suppress_cwnd = false;
++		ca->state_flags &= ~(C4_STATE_CWR_PENDING | C4_STATE_CWR_LOSS);
++		c4_notify_congestion(sk, rs->losses > 0 ? C4_CONGESTION_LOSS :
++				      (cwr_flags & C4_STATE_CWR_LOSS) ?
++				      C4_CONGESTION_LOSS : C4_CONGESTION_ECN,
++				      0, c4_sensitivity_for_rate(ca->nominal_rate),
++				      false);
++		ca = c4_ca(sk);
++		control_changed = true;
++	}
++	if (ca->state_flags & C4_STATE_DEFER_REAPPLY) {
++		ca->state_flags &= ~C4_STATE_DEFER_REAPPLY;
++		control_changed = true;
++	}
++
++	if (tcp_in_cwnd_reduction(sk)) {
++		c4_cwnd_reduction(sk, rs->acked_sacked, rs->losses, flag);
++		return;
++	}
++	if (inet_csk(sk)->icsk_ca_state == TCP_CA_Loss)
++		return;
++	if (rs->prior_in_flight && !tcp_packets_in_flight(tp))
++		tp->tcp_wstamp_ns = tcp_clock_ns();
++
++	if (!rs->is_app_limited)
++		sample_rate = c4_sample_rate(tp, rs);
++	round_start = !before(rs->prior_delivered, ca->next_round_delivered);
++	if (round_start || c4_rtt_sample_usable(ca, rs) ||
++	    sample_rate > ca->round_peak_rate)
++		ca->state_flags &= ~C4_STATE_UNDO_VALID;
++	if (round_start) {
++		control_changed |= c4_finish_round(sk);
++		ca = c4_ca(sk);
++	}
++	c4_update_rtt(ca, rs);
++	if (sample_rate) {
++		ca->round_peak_rate = max(ca->round_peak_rate, sample_rate);
++		if (sample_rate > ca->nominal_rate) {
++			c4_set_nominal_rate(ca, sample_rate);
++			ca->low_rate_rounds = 0;
++			control_changed = true;
++		}
++	}
++
++	if (ca->mode == C4_INITIAL && rs->acked_sacked &&
++	    tcp_is_cwnd_limited(sk)) {
++		u32 old_cwnd = tcp_snd_cwnd(tp);
++
++		tcp_slow_start(tp, rs->acked_sacked);
++		if (old_cwnd != tcp_snd_cwnd(tp))
++			ca->state_flags &= ~C4_STATE_UNDO_VALID;
++		control_changed |= old_cwnd != tcp_snd_cwnd(tp);
++	}
++	if (ca->mode == C4_INITIAL) {
++		u32 old_initial_cwnd = ca->initial_cwnd;
++
++		if (old_initial_cwnd != tcp_snd_cwnd(tp))
++			ca->state_flags &= ~C4_STATE_UNDO_VALID;
++		ca->initial_cwnd = tcp_snd_cwnd(tp);
++		control_changed |= old_initial_cwnd != ca->initial_cwnd;
++	}
++	sensitivity = c4_sensitivity_for_rate(ca->nominal_rate);
++	delay = c4_delay_threshold(ca, sensitivity);
++	if (!recovery_sample && ca->mode != C4_RECOVERY &&
++	    ca->max_rtt_us && ca->gain_q10 > C4_Q10 &&
++	    ca->era_max_rtt_us > (u64)ca->max_rtt_us + delay) {
++		c4_notify_congestion(sk, C4_CONGESTION_DELAY,
++				     ca->era_max_rtt_us - ca->max_rtt_us - delay,
++				     sensitivity, false);
++		suppress_cwnd = false;
++		control_changed = true;
++	} else if (!recovery_sample && ca->mode != C4_RECOVERY &&
++		   ca->loss_ewma_q16 >
++		   c4_loss_threshold_q16(sensitivity)) {
++		c4_notify_congestion(sk, C4_CONGESTION_LOSS, 0,
++				     sensitivity, false);
++		suppress_cwnd = false;
++		control_changed = true;
++	} else if (!recovery_sample && ca->mode != C4_RECOVERY &&
++		   ca->ecn_alpha_q10 > c4_ecn_threshold(sensitivity)) {
++		c4_notify_congestion(sk, C4_CONGESTION_ECN,
++				     ca->ecn_alpha_q10 - c4_ecn_threshold(sensitivity),
++				     sensitivity, false);
++		suppress_cwnd = false;
++		control_changed = true;
++	}
++	if (control_changed) {
++		if (suppress_cwnd)
++			c4_set_pacing_rate(sk);
++		else
++			c4_apply_control(sk);
++	}
++}
++
++static struct tcp_congestion_ops tcp_c4 __read_mostly = {
++	.flags		= TCP_CONG_NON_RESTRICTED,
++	.name		= "c4",
++	.owner		= THIS_MODULE,
++	.init		= c4_init,
++	.ssthresh	= c4_ssthresh,
++	.undo_cwnd	= c4_undo_cwnd,
++	.set_state	= c4_set_state,
++	.cwnd_event	= c4_cwnd_event,
++	.cong_control	= c4_cong_control,
++};
++
++static int __init c4_register(void)
++{
++	BUILD_BUG_ON(sizeof(struct c4) > ICSK_CA_PRIV_SIZE);
++	return tcp_register_congestion_control(&tcp_c4);
++}
++
++static void __exit c4_unregister(void)
++{
++	tcp_unregister_congestion_control(&tcp_c4);
++}
++
++module_init(c4_register);
++module_exit(c4_unregister);
++
++MODULE_AUTHOR("Christian Huitema");
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_DESCRIPTION("TCP C4 congestion control");

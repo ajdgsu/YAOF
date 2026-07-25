@@ -4,26 +4,33 @@ Date: Wed, 23 Aug 2023 21:41:37 +0800
 Subject: [PATCH] mount /sys/fs/cgroup/systemd for docker systemd support
 
 ---
- cgroupfs-mount | 6 ++++++
- 1 file changed, 6 insertions(+)
+ cgroupfs-mount | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
 
 diff --git a/cgroupfs-mount b/cgroupfs-mount
 index 8274c7c..4c1f954 100755
 --- a/cgroupfs-mount
 +++ b/cgroupfs-mount
-@@ -47,6 +47,12 @@ if grep -q cgroup2 /proc/filesystems; then
- 	mount -t cgroup2 -o rw,nosuid,nodev,noexec,relatime,nsdelegate cgroup2 /sys/fs/cgroup/cgroup2
- fi
- 
-+# mount /sys/fs/cgroup/systemd for docker systemd 
-+mkdir -p /sys/fs/cgroup/systemd
-+if ! mountpoint -q /sys/fs/cgroup/systemd; then
-+	mount -t cgroup -o none,name=systemd systemd /sys/fs/cgroup/systemd
+@@ -53,3 +53,20 @@
++# Mount a named v1 hierarchy in v1 and hybrid mode, but not on pure v2.
++if awk '$0 ~ / - cgroup / { found = 1 } END { exit !found }' /proc/self/mountinfo; then
++	if ! mkdir -p /sys/fs/cgroup/systemd; then
++		echo "failed to create systemd cgroup mountpoint" >&2
++		exit 1
++	fi
++	if ! mountpoint -q /sys/fs/cgroup/systemd; then
++		if ! mount -t cgroup -o rw,nosuid,nodev,noexec,relatime,none,name=systemd systemd /sys/fs/cgroup/systemd; then
++			echo "failed to mount systemd cgroup at /sys/fs/cgroup/systemd" >&2
++			exit 1
++		fi
++	fi
++	if ! awk '$5 == "/sys/fs/cgroup/systemd" && $0 ~ / - cgroup / && $0 ~ /(^|,)name=systemd(,|$)/ { found = 1 } END { exit !found }' /proc/self/mountinfo; then
++		echo "unexpected filesystem at /sys/fs/cgroup/systemd" >&2
++		exit 1
++	fi
 +fi
-+
  # example /proc/cgroups:
  #  #subsys_name	hierarchy	num_cgroups	enabled
  #  cpuset	2	3	1
 -- 
 2.34.8
-

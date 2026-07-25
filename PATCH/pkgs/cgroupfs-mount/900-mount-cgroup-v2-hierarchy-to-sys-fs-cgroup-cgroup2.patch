@@ -4,21 +4,33 @@ Date: Wed, 23 Aug 2023 20:10:30 +0800
 Subject: [PATCH 1/2] mount cgroup v2 hierarchy to /sys/fs/cgroup/cgroup2
 
 ---
- cgroupfs-mount | 6 ++++++
- 1 file changed, 6 insertions(+)
+ cgroupfs-mount | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
 
 diff --git a/cgroupfs-mount b/cgroupfs-mount
 index 40810ba..114f7a1 100755
 --- a/cgroupfs-mount
 +++ b/cgroupfs-mount
-@@ -41,6 +41,12 @@ for sys in $(awk '!/^#/ { if ($4 == 1) print $1 }' /proc/cgroups); do
+@@ -41,6 +41,24 @@ for sys in $(awk '!/^#/ { if ($4 == 1) print $1 }' /proc/cgroups); do
  	fi
  done
  
-+# mount cgroup v2 hierarchy to /sys/fs/cgroup/cgroup2 if kernel support cgroup2 filesystem
-+if grep -q cgroup2 /proc/filesystems; then
-+	mkdir -p /sys/fs/cgroup/cgroup2
-+	mount -t cgroup2 -o rw,nosuid,nodev,noexec,relatime,nsdelegate cgroup2 /sys/fs/cgroup/cgroup2
++# Mount cgroup v2 at a separate path when the kernel exposes the filesystem.
++if awk '$NF == "cgroup2" { found = 1 } END { exit !found }' /proc/filesystems; then
++	if ! mkdir -p /sys/fs/cgroup/cgroup2; then
++		echo "failed to create cgroup2 mountpoint" >&2
++		exit 1
++	fi
++	if ! mountpoint -q /sys/fs/cgroup/cgroup2; then
++		if ! mount -t cgroup2 -o rw,nosuid,nodev,noexec,relatime,nsdelegate cgroup2 /sys/fs/cgroup/cgroup2; then
++			echo "failed to mount cgroup2 at /sys/fs/cgroup/cgroup2" >&2
++			exit 1
++		fi
++	fi
++	if ! awk '$5 == "/sys/fs/cgroup/cgroup2" && $0 ~ / - cgroup2 / && $0 ~ /(^|,)nsdelegate(,|$)/ { found = 1 } END { exit !found }' /proc/self/mountinfo; then
++		echo "unexpected filesystem at /sys/fs/cgroup/cgroup2" >&2
++		exit 1
++	fi
 +fi
 +
  # example /proc/cgroups:
@@ -26,4 +38,3 @@ index 40810ba..114f7a1 100755
  #  cpuset	2	3	1
 -- 
 2.34.8
-

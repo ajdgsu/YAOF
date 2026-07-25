@@ -7,6 +7,8 @@ START=90
 STOP=10
 USE_PROCD=1
 
+LEGACY_STATE_FILE=/var/run/sfe-ecm-legacy.state
+
 sfe_enabled() {
 	local enabled=0
 	local val
@@ -29,40 +31,236 @@ sfe_enabled() {
 	return $((1 - enabled))
 }
 
+module_loaded() {
+	lsmod | grep -q "^$1 "
+}
+
+unload_module() {
+	local listed_name="$1"
+	local module_name="$2"
+
+	module_loaded "$listed_name" || return 0
+	rmmod "$module_name" 2>/dev/null && return 0
+
+	logger -p daemon.err -t sfe-ecm "failed to unload $module_name"
+	return 1
+}
+
+load_module() {
+	local listed_name="$1"
+	local module_name="$2"
+
+	module_loaded "$listed_name" && return 0
+	modprobe "$module_name" 2>/dev/null && return 0
+
+	logger -p daemon.err -t sfe-ecm "failed to restore $module_name"
+	return 1
+}
+
+rollback_start() {
+	unload_owned_sfe_stack "$1" "$2" || return 1
+	restore_legacy_stack "$1" "$3" "$4" "$5" "$6" || return 1
+	clear_legacy_state
+}
+
+restore_legacy_stack() {
+	local sfe_was_loaded="$1"
+	local shortcut_fe_was_loaded="$2"
+	local shortcut_fe_ipv6_was_loaded="$3"
+	local shortcut_fe_cm_was_loaded="$4"
+	local shortcut_fe_cm_ipv6_was_loaded="$5"
+	local ret=0
+
+	[ "$sfe_was_loaded" = "0" ] ||
+		load_module qca_nss_sfe qca-nss-sfe || ret=1
+	[ "$shortcut_fe_was_loaded" = "0" ] ||
+		load_module shortcut_fe shortcut-fe || ret=1
+	[ "$shortcut_fe_ipv6_was_loaded" = "0" ] ||
+		load_module shortcut_fe_ipv6 shortcut-fe-ipv6 || ret=1
+	[ "$shortcut_fe_cm_was_loaded" = "0" ] ||
+		load_module shortcut_fe_cm shortcut-fe-cm || ret=1
+	[ "$shortcut_fe_cm_ipv6_was_loaded" = "0" ] ||
+		load_module shortcut_fe_cm_ipv6 shortcut-fe-cm-ipv6 || ret=1
+
+	return "$ret"
+}
+
+record_legacy_state() {
+	local tmp_file="${LEGACY_STATE_FILE}.$$"
+	local saved_umask
+
+	[ -e "$LEGACY_STATE_FILE" ] && return 0
+
+	saved_umask=$(umask)
+	umask 077
+	printf '%s %s %s %s %s %s\n' \
+		"$1" "$2" "$3" "$4" "$5" "$6" > "$tmp_file" || {
+			umask "$saved_umask"
+			rm -f "$tmp_file"
+			logger -p daemon.err -t sfe-ecm "failed to record legacy module state"
+			return 1
+		}
+	umask "$saved_umask"
+	chmod 0600 "$tmp_file" || {
+		rm -f "$tmp_file"
+		logger -p daemon.err -t sfe-ecm "failed to secure legacy module state"
+		return 1
+	}
+	mv -f "$tmp_file" "$LEGACY_STATE_FILE" || {
+		rm -f "$tmp_file"
+		logger -p daemon.err -t sfe-ecm "failed to publish legacy module state"
+		return 1
+	}
+}
+
+read_legacy_state() {
+	local extra_line
+	local state
+
+	[ -f "$LEGACY_STATE_FILE" ] && [ ! -L "$LEGACY_STATE_FILE" ] || return 1
+	[ "$(stat -c '%a' "$LEGACY_STATE_FILE" 2>/dev/null)" = "600" ] || return 1
+	exec 3< "$LEGACY_STATE_FILE" || return 1
+	read -r sfe_was_loaded ecm_was_loaded shortcut_fe_was_loaded shortcut_fe_ipv6_was_loaded \
+		shortcut_fe_cm_was_loaded shortcut_fe_cm_ipv6_was_loaded \
+		<&3 || {
+		exec 3<&-
+		return 1
+	}
+	if IFS= read -r extra_line <&3; then
+		exec 3<&-
+		logger -p daemon.err -t sfe-ecm "invalid legacy module state"
+		return 1
+	fi
+	exec 3<&-
+
+	for state in "$sfe_was_loaded" "$ecm_was_loaded" "$shortcut_fe_was_loaded" \
+		"$shortcut_fe_ipv6_was_loaded" "$shortcut_fe_cm_was_loaded" \
+		"$shortcut_fe_cm_ipv6_was_loaded"; do
+		case "$state" in
+			0|1) ;;
+			*)
+				logger -p daemon.err -t sfe-ecm "invalid legacy module state"
+				return 1
+			;;
+			esac
+	done
+	return 0
+}
+
+clear_legacy_state() {
+	rm -f "$LEGACY_STATE_FILE"
+}
+
+unload_owned_sfe_stack() {
+	local sfe_was_loaded="$1"
+	local ecm_was_loaded="$2"
+
+	[ "$ecm_was_loaded" = "1" ] || unload_module ecm ecm || return 1
+	[ "$sfe_was_loaded" = "1" ] || unload_module qca_nss_sfe qca-nss-sfe || return 1
+}
+
 start_service() {
+	local sfe_was_loaded=0
+	local ecm_was_loaded=0
+	local shortcut_fe_was_loaded=0
+	local shortcut_fe_ipv6_was_loaded=0
+	local shortcut_fe_cm_was_loaded=0
+	local shortcut_fe_cm_ipv6_was_loaded=0
+
 	if sfe_enabled; then
 		logger -t sfe-ecm "SFE v2 + ECM acceleration: enabling"
-		lsmod | grep -q "^shortcut[-_]fe " && rmmod shortcut-fe
-		lsmod | grep -q "^shortcut[-_]fe[-_]ipv6 " && rmmod shortcut-fe-ipv6
-		modprobe qca-nss-sfe 2>/dev/null
-		modprobe ecm 2>/dev/null
-		sysctl -w net.ecm.ecm_classifier_default.accel_mode=2 2>/dev/null
-		sysctl -w net.ecm.ecm_classifier_default.accel_delay_pkts_v2=3 2>/dev/null
+		if [ -e "$LEGACY_STATE_FILE" ]; then
+			read_legacy_state || {
+				logger -p daemon.err -t sfe-ecm "failed to read legacy module state"
+				return 1
+			}
+		else
+			module_loaded qca_nss_sfe && sfe_was_loaded=1
+			module_loaded ecm && ecm_was_loaded=1
+			module_loaded shortcut_fe && shortcut_fe_was_loaded=1
+			module_loaded shortcut_fe_ipv6 && shortcut_fe_ipv6_was_loaded=1
+			module_loaded shortcut_fe_cm && shortcut_fe_cm_was_loaded=1
+			module_loaded shortcut_fe_cm_ipv6 && shortcut_fe_cm_ipv6_was_loaded=1
+			record_legacy_state "$sfe_was_loaded" \
+				"$ecm_was_loaded" \
+				"$shortcut_fe_was_loaded" \
+				"$shortcut_fe_ipv6_was_loaded" \
+				"$shortcut_fe_cm_was_loaded" \
+				"$shortcut_fe_cm_ipv6_was_loaded" || return 1
+		fi
+		unload_module shortcut_fe_cm_ipv6 shortcut-fe-cm-ipv6 &&
+			unload_module shortcut_fe_cm shortcut-fe-cm &&
+		unload_module shortcut_fe_ipv6 shortcut-fe-ipv6 &&
+			unload_module shortcut_fe shortcut-fe || {
+				restore_legacy_stack "$sfe_was_loaded" \
+				"$shortcut_fe_was_loaded" \
+				"$shortcut_fe_ipv6_was_loaded" \
+				"$shortcut_fe_cm_was_loaded" \
+				"$shortcut_fe_cm_ipv6_was_loaded"
+			[ "$?" = "0" ] && clear_legacy_state
+			return 1
+		}
+		modprobe qca-nss-sfe 2>/dev/null || {
+			logger -p daemon.err -t sfe-ecm "failed to load qca-nss-sfe"
+			rollback_start "$sfe_was_loaded" \
+				"$ecm_was_loaded" \
+				"$shortcut_fe_was_loaded" \
+				"$shortcut_fe_ipv6_was_loaded" \
+				"$shortcut_fe_cm_was_loaded" \
+				"$shortcut_fe_cm_ipv6_was_loaded"
+			return 1
+		}
+		modprobe ecm 2>/dev/null || {
+			logger -p daemon.err -t sfe-ecm "failed to load ecm"
+			rollback_start "$sfe_was_loaded" \
+				"$ecm_was_loaded" \
+				"$shortcut_fe_was_loaded" \
+				"$shortcut_fe_ipv6_was_loaded" \
+				"$shortcut_fe_cm_was_loaded" \
+				"$shortcut_fe_cm_ipv6_was_loaded"
+			return 1
+		}
+		sysctl -w net.ecm.ecm_classifier_default.accel_mode=2 >/dev/null 2>&1 ||
+			logger -p daemon.warn -t sfe-ecm "accel_mode sysctl unavailable"
+		sysctl -w net.ecm.ecm_classifier_default.accel_delay_pkts_v2=3 >/dev/null 2>&1 ||
+			logger -p daemon.warn -t sfe-ecm "accel_delay_pkts_v2 sysctl unavailable"
 	fi
 }
 
 stop_service() {
+	local sfe_was_loaded=0
+	local ecm_was_loaded=0
+	local shortcut_fe_was_loaded=0
+	local shortcut_fe_ipv6_was_loaded=0
+	local shortcut_fe_cm_was_loaded=0
+	local shortcut_fe_cm_ipv6_was_loaded=0
+
 	logger -t sfe-ecm "SFE v2 + ECM acceleration: disabling"
-	rmmod ecm 2>/dev/null
-	rmmod qca-nss-sfe 2>/dev/null
+	[ -e "$LEGACY_STATE_FILE" ] || return 0
+	read_legacy_state || {
+		logger -p daemon.err -t sfe-ecm "failed to read legacy module state"
+		return 1
+	}
+	unload_owned_sfe_stack "$sfe_was_loaded" "$ecm_was_loaded" || return 1
+	restore_legacy_stack "$sfe_was_loaded" \
+		"$shortcut_fe_was_loaded" \
+		"$shortcut_fe_ipv6_was_loaded" \
+		"$shortcut_fe_cm_was_loaded" \
+		"$shortcut_fe_cm_ipv6_was_loaded" || return 1
+	clear_legacy_state
 }
 
 reload_service() {
 	if sfe_enabled; then
 		# Already loaded? Check if ecm module is present
 		if ! lsmod | grep -q "^ecm "; then
-			logger -t sfe-ecm "SFE v2 + ECM acceleration: enabling on reload"
-			modprobe qca-nss-sfe 2>/dev/null
-			modprobe ecm 2>/dev/null
-			sysctl -w net.ecm.ecm_classifier_default.accel_mode=2 2>/dev/null
-			sysctl -w net.ecm.ecm_classifier_default.accel_delay_pkts_v2=3 2>/dev/null
+			start_service
 		fi
 	else
 		# Should be disabled, unload if loaded
-		if lsmod | grep -q "^ecm "; then
+		if [ -e "$LEGACY_STATE_FILE" ]; then
 			logger -t sfe-ecm "SFE v2 + ECM acceleration: disabling on reload"
-			rmmod ecm 2>/dev/null
-			rmmod qca-nss-sfe 2>/dev/null
+			stop_service
 		fi
 	fi
 }

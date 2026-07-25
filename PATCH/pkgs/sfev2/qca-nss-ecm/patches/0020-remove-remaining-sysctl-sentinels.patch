@@ -1,3 +1,33 @@
+--- a/ecm_classifier_default.c
++++ b/ecm_classifier_default.c
+@@ -821,3 +821,2 @@ static struct ctl_table ecm_classifier_d
+-	},
+-	{ }
++	}
+ };
+
+--- a/ecm_db/ecm_db.c
++++ b/ecm_db/ecm_db.c
+@@ -673,2 +673 @@ static struct ctl_table ecm_db_ctl_table
+-	{ }
+ };
+
+--- a/ecm_interface.c
++++ b/ecm_interface.c
+@@ -9601,3 +9601,2 @@ static struct ctl_table ecm_interface_ta
+-	},
+-	{ }
++	}
+ };
+
+--- a/frontends/sfe/ecm_sfe_common.c
++++ b/frontends/sfe/ecm_sfe_common.c
+@@ -530,3 +530,2 @@ static struct ctl_table ecm_sfe_sysctl_t
+-	},
+-	{}
++	}
+ };
+
 --- a/ecm_classifier_mark.c
 +++ b/ecm_classifier_mark.c
 @@ -675,8 +675,7 @@ static struct ctl_table ecm_classifier_m
@@ -48,14 +78,9 @@
  /*
 --- a/frontends/sfe/ecm_sfe_ipv4.c
 +++ b/frontends/sfe/ecm_sfe_ipv4.c
-@@ -1144,7 +1144,6 @@ static struct ctl_table ecm_sfe_ipv4_ctl
- 		.proc_handler	= &ecm_sfe_ipv4_reject_acceleration_for_ipsec_handler,
- 	},
- #endif
+@@ -1148,2 +1148 @@ static struct ctl_table ecm_sfe_ipv4_ctl
 -	{ }
  };
- 
- /*
 --- a/frontends/sfe/ecm_sfe_ipv6.c
 +++ b/frontends/sfe/ecm_sfe_ipv6.c
 @@ -1143,7 +1143,6 @@ static struct ctl_table ecm_sfe_ipv6_ctl
@@ -208,6 +233,76 @@
  };
  
  /*
+--- a/ecm_tracker_udp.c
++++ b/ecm_tracker_udp.c
+@@ -1219,6 +1219,5 @@ static struct ctl_table ecm_tracker_udp_
+ 		.mode		= 0644,
+ 		.proc_handler	= &ecm_tracker_udp_rtp_payload_types_handler,
+-	},
+-	{}
++	}
+ };
+ 
+--- a/frontends/ecm_front_end_common.c
++++ b/frontends/ecm_front_end_common.c
+@@ -1254,6 +1254,5 @@ static struct ctl_table ecm_front_end_sy
+ 		.mode		= 0644,
+ 		.proc_handler	= &ecm_front_end_tcp_denied_ports_handler,
+-	},
+-	{}
++	}
+ };
+ 
+--- a/ecm_sdx/ecm_sdx.c
++++ b/ecm_sdx/ecm_sdx.c
+@@ -217,6 +217,5 @@ static struct ctl_table ecm_sdx_table[]
+ 		.mode		= 0666,
+ 		.proc_handler	= &ecm_sdx_lan_prefix_handler,
+-	},
+-	{}
++	}
+ };
+ 
+--- a/examples/ecm_ae_select.c
++++ b/examples/ecm_ae_select.c
+@@ -700,6 +700,5 @@ static struct ctl_table ecm_ae_select_sy
+ 		.mode		= 0644,
+ 		.proc_handler	= &ecm_ae_select_test_rule_handler,
+-	},
+-	{ }
++	}
+ };
+ 
+--- a/examples/ecm_sdx_pcc.c
++++ b/examples/ecm_sdx_pcc.c
+@@ -935,6 +935,5 @@ static struct ctl_table ecm_sdx_pcc_sysc
+ 		.mode			= 0644,
+ 		.proc_handler		= &ecm_sdx_pcc_unregister_handler,
+-	},
+-	{ }
++	}
+ };
+ 
+--- a/examples/ecm_pcc_test.c
++++ b/examples/ecm_pcc_test.c
+@@ -1558,6 +1558,5 @@ static struct ctl_table ecm_pcc_test_sys
+ 		.mode		= 0644,
+ 		.proc_handler	= &ecm_pcc_test_pcc_mirror_en_handler,
+-	},
+-	{ }
++	}
+ };
+ 
+--- a/examples/ecm_sfe_l2.c
++++ b/examples/ecm_sfe_l2.c
+@@ -1210,6 +1210,5 @@ static struct ctl_table ecm_sfe_l2_sysct
+ 		.mode		= 0644,
+ 		.proc_handler	= &ecm_sfe_l2_defunct_by_port_handler,
+-	},
+-	{ }
++	}
+ };
+ 
 --- a/ecm_classifier_wifi.c
 +++ b/ecm_classifier_wifi.c
 @@ -721,8 +721,7 @@ static struct ctl_table ecm_classifier_w
@@ -220,3 +315,43 @@
  };
  
  /*
+
+--- a/ecm_conntrack_notifier.c
++++ b/ecm_conntrack_notifier.c
+@@ -496,5 +496,5 @@ int ecm_conntrack_notifier_init(struct d
+ #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+-	result = nf_conntrack_register_notifier(&init_net, &ecm_conntrack_notifier);
++	result = nf_conntrack_register_chain_notifier(&init_net, &ecm_conntrack_notifier);
+ 	if (result < 0) {
+ 		DEBUG_ERROR("Can't register nf notifier hook.\n");
+ 		goto init_cleanup_1;
+@@ -504,6 +504,10 @@ int ecm_conntrack_notifier_init(struct d
+ 	}
+ #else
+-	nf_conntrack_register_notifier(&init_net, &ecm_conntrack_notifier);
++	result = nf_conntrack_register_notifier(&init_net, &ecm_conntrack_notifier);
++	if (result < 0) {
++		DEBUG_ERROR("Can't register nf notifier hook.\n");
++		goto init_cleanup_1;
++	}
+ #endif
+ 
+ 	/*
+@@ -524,7 +524,7 @@ int ecm_conntrack_notifier_init(struct d
+ 
+ init_cleanup_2:
+ #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+-	nf_conntrack_unregister_notifier(&init_net, &ecm_conntrack_notifier);
++	nf_conntrack_unregister_chain_notifier(&init_net, &ecm_conntrack_notifier);
+ #else
+ 	nf_conntrack_unregister_notifier(&init_net);
+ #endif
+@@ -552,7 +552,7 @@ void ecm_conntrack_notifier_exit(void)
+ 	nf_ct_netns_put(&init_net, NFPROTO_IPV6);
+ #endif
+ #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+-	nf_conntrack_unregister_notifier(&init_net, &ecm_conntrack_notifier);
++	nf_conntrack_unregister_chain_notifier(&init_net, &ecm_conntrack_notifier);
+ #else
+ 	nf_conntrack_unregister_notifier(&init_net);
+ #endif

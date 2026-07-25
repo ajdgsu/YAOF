@@ -1,0 +1,21 @@
+--- a/ecm_db/ecm_db.c
++++ b/ecm_db/ecm_db.c
+@@ -785,6 +785,7 @@ int ecm_db_init(struct dentry *dentry)
+ 	ret = register_fib_notifier(&init_net, &ecm_fib_notifier, NULL, NULL);
+ 	if (ret) {
+ 		DEBUG_ERROR("Could not register for the routing events error:%d\n", ret);
++		goto init_cleanup_5;
+ 	} else {
+ 		ecm_fib_notifier_registered = true;
+ 	}
+@@ -797,6 +798,10 @@ int ecm_db_init(struct dentry *dentry)
+ #endif
+ 	return ret;
+ 
++init_cleanup_5:
++	ecm_db_timer_exit();
++	ecm_db_listener_deref(ecm_db_li);
++	ecm_db_li = NULL;
+ init_cleanup_4:
+ 	ecm_db_node_exit();
+ init_cleanup_3:
