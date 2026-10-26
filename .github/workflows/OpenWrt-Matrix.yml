@@ -269,6 +269,9 @@ jobs:
       - name: Compile Openwrt
         if: inputs.build_firmware
         working-directory: ${{ github.workspace }}/openwrt
+        env:
+          CI: ""
+          GITHUB_ACTIONS: ""
         run: |
           make -j$(($(nproc) + 1))
 

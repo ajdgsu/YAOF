@@ -580,7 +580,7 @@ cp -rf ../PATCH/kernel/others/* ./target/linux/generic/pending-${KERNEL_VERSION}
 sed -i '/luci-app-attendedsysupgrade/d' feeds/luci/collections/luci-nginx/Makefile
 
 ### Fullcone-NAT 部分 ###
-# bcmfullcone
+# Keep the kernel and nft userspace activation ABI together.
 cp -rf ../PATCH/kernel/bcmfullcone/* ./target/linux/generic/hack-${KERNEL_VERSION}/
 # set nf_conntrack_expect_max for fullcone
 wget -qO - https://github.com/openwrt/openwrt/commit/bbf39d07.patch | patch -p1
@@ -663,7 +663,7 @@ rm -rf ./package/new/trojan-plus
 # One package-manager conflict declaration is sufficient for mutual exclusion.
 sed -i '/CONFLICTS:=mihomo-meta/d' ./package/new/openwrt_helloworld/mihomo-alpha/Makefile
 rm -rf feeds/packages/net/{xray-core,v2ray-core,v2ray-geodata,sing-box,frp,microsocks,shadowsocks-libev,zerotier,daed}
-rm -rf feeds/luci/applications/{luci-app-frps,luci-app-frpc,luci-app-zerotier,luci-app-filemanager}
+rm -rf feeds/luci/applications/{luci-app-frps,luci-app-frpc,luci-app-zerotier}
 rm -rf feeds/packages/utils/coremark
 sed -i 's/+@KERNEL_DEBUG_INFO_BTF/+vmlinux-btf/' ./package/new/openwrt-einat-ebpf/Makefile
 git clone https://github.com/QiuSimons/vmlinux-btf ./package/new/vmlinux-btf
@@ -681,6 +681,9 @@ cp -rf ../OpenWrt-Add/feeds_packages_lang_node-prebuilt ./feeds/packages/lang/no
 rm -rf ./feeds/packages/lang/golang
 cp -rf ../openwrt_pkg_ma/lang/golang ./feeds/packages/lang/golang
 #git clone https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
+# gn
+rm -rf ./feeds/packages/devel/gn
+cp -rf ../imm_pkg/devel/gn ./feeds/packages/devel/gn
 # apk
 pushd feeds/luci
 wget -qO- https://github.com/sbwml/r4s_build_script/raw/refs/heads/master/openwrt/patch/luci/applications/luci-app-package-manager/0001-luci-app-package-manager-support-installing-uploaded.patch | patch -p1

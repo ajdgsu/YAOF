@@ -67,7 +67,7 @@ lucky="https://github.com/sirpdboy/luci-app-lucky.git"
 clone_destinations=(
   openwrt openwrt_snap immortalwrt_24 immortalwrt_23 lede lede_pkg_ma
   openwrt_ma openwrt_pkg_ma OpenWrt-Add dockerman docker_lib qosmate
-  luci-app-qosmate lucky tcp_brutal
+  luci-app-qosmate lucky tcp_brutal imm_pkg
 )
 for clone_destination in "${clone_destinations[@]}"; do
   if [[ -e "$clone_destination" ]]; then
@@ -90,6 +90,7 @@ start_clone "$openwrt_repo" "$latest_release" openwrt
 start_clone "$openwrt_repo" openwrt-25.12 openwrt_snap
 start_clone "$immortalwrt_repo" openwrt-24.10 immortalwrt_24
 start_clone "$immortalwrt_repo" openwrt-23.05 immortalwrt_23
+start_clone "$immortalwrt_pkg_repo" master imm_pkg
 
 start_clone "$lede_repo" master lede
 start_clone "$lede_pkg_repo" master lede_pkg_ma
