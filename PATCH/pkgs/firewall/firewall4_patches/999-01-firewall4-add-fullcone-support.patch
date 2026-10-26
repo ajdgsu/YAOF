@@ -235,6 +235,6 @@ IPv6 traffic do NOT need this FullCone NAT functionality.
  
 -		if ((zone.auto_helper && !(zone.masq || zone.masq6)) || length(zone.helper)) {
 +		if ((zone.auto_helper && !(zone.masq || zone.masq6 || zone.fullcone4 == 1 || zone.fullcone6 == 1)) || length(zone.helper)) {
- 			zone.dflags.helper = true;
+ 			zone.dflags.helper = false;
  
  			for (let helper in (length(zone.helper) ? zone.helper : this.state.helpers)) {
