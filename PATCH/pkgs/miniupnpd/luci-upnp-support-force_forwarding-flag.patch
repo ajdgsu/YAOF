@@ -15,7 +15,7 @@ index e0a326d4fcf4..f6b518437aa9 100644
 +++ b/applications/luci-app-upnp/htdocs/luci-static/resources/view/upnp/upnp.js
 @@ -163,4 +163,7 @@ return view.extend({
  			_('To detect the public IPv4 address for unrestricted full-cone/one-to-one NATs'));
-
+ 
 +		s.taboption('advanced', form.Flag, 'ext_allow_private_ipv4', _('Force Forwarding'),
 +			_('Force forwarding even there is no public IP (please try STUN first)'))
 +
