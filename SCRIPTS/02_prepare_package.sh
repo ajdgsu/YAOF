@@ -465,6 +465,8 @@ sed -i 's/Os/O2/g' include/target.mk
 sed -i 's,XZ_SUPPORT=1,XZ_SUPPORT=1 ZSTD_SUPPORT=1 LZ4_SUPPORT=1,g' tools/squashfs4/Makefile
 sed -i 's/HOSTCC="$(HOSTCC)"/HOSTCC="gcc"/g' include/u-boot.mk
 normalize_exact_line feeds.conf.default 'src-git tcp_brutal https://github.com/haruue-net/openwrt-tcp-brutal.git;master'
+# Keep virtual-provider ranking out of propagated Kconfig dependencies.
+apply_patch_once ../PATCH/pkgs/build-system/100-package-metadata-provider-reemit.patch
 # 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
