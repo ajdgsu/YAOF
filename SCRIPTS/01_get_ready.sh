@@ -117,29 +117,31 @@ if (( clone_failed != 0 )); then
   exit 1
 fi
 
-# 进行一些处理
-cp -rf openwrt_snap/include/package-pack.mk /tmp/package-pack.mk.bak
-cp -rf openwrt_snap/include/package.mk /tmp/package.mk.bak
-cp -rf openwrt_snap/include/kernel.mk /tmp/kernel.mk.bak
-cp -rf openwrt_snap/scripts/metadata.pm /tmp/metadata.pm.bak
-cp -rf openwrt/package/libs/toolchain/Makefile /tmp/Makefile.bak
-cp -rf openwrt/package/system/procd /tmp/procd.bak
-cp -rf openwrt/package/libs/libubox /tmp/libubox.bak
+# Keep import backups private and on the project filesystem, including failures.
+prepare_backup="$(mktemp -d "$PWD/.yaof-prepare-backup.XXXXXX")"
+echo "Import backups: $prepare_backup"
+cp -rf openwrt_snap/include/package-pack.mk "$prepare_backup/package-pack.mk.bak"
+cp -rf openwrt_snap/include/package.mk "$prepare_backup/package.mk.bak"
+cp -rf openwrt_snap/include/kernel.mk "$prepare_backup/kernel.mk.bak"
+cp -rf openwrt_snap/scripts/metadata.pm "$prepare_backup/metadata.pm.bak"
+cp -rf openwrt/package/libs/toolchain/Makefile "$prepare_backup/Makefile.bak"
+cp -rf openwrt/package/system/procd "$prepare_backup/procd.bak"
+cp -rf openwrt/package/libs/libubox "$prepare_backup/libubox.bak"
 find openwrt/package/* -maxdepth 0 ! -name 'firmware' ! -name 'kernel' ! -name 'base-files' ! -name 'Makefile' -exec rm -rf {} +
 rm -rf ./openwrt/package/base-files/files/lib
 cp -rf ./openwrt_snap/package/base-files/files/lib ./openwrt/package/base-files/files/
 rm -rf ./openwrt_snap/package/firmware ./openwrt_snap/package/kernel ./openwrt_snap/package/base-files ./openwrt_snap/package/Makefile
 cp -rf ./openwrt_snap/package/* ./openwrt/package/
-cp -rf /tmp/package-pack.mk.bak ./openwrt/include/package-pack.mk
-cp -rf /tmp/package.mk.bak ./openwrt/include/package.mk
-cp -rf /tmp/kernel.mk.bak ./openwrt/include/kernel.mk
-cp -rf /tmp/metadata.pm.bak ./openwrt/scripts/metadata.pm
-cp -rf /tmp/Makefile.bak ./openwrt/package/libs/toolchain/Makefile
+cp -rf "$prepare_backup/package-pack.mk.bak" ./openwrt/include/package-pack.mk
+cp -rf "$prepare_backup/package.mk.bak" ./openwrt/include/package.mk
+cp -rf "$prepare_backup/kernel.mk.bak" ./openwrt/include/kernel.mk
+cp -rf "$prepare_backup/metadata.pm.bak" ./openwrt/scripts/metadata.pm
+cp -rf "$prepare_backup/Makefile.bak" ./openwrt/package/libs/toolchain/Makefile
 cp -rf ./openwrt_snap/feeds.conf.default ./openwrt/feeds.conf.default
 rm -rf openwrt/package/system/procd
-cp -rf /tmp/procd.bak ./openwrt/package/system/procd
+cp -rf "$prepare_backup/procd.bak" ./openwrt/package/system/procd
 rm -rf openwrt/package/libs/libubox
-cp -rf /tmp/libubox.bak ./openwrt/package/libs/libubox
+cp -rf "$prepare_backup/libubox.bak" ./openwrt/package/libs/libubox
 
 # 退出脚本
 exit 0
