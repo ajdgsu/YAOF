@@ -701,6 +701,7 @@ pushd feeds/luci
 wget -qO- https://github.com/sbwml/r4s_build_script/raw/refs/heads/master/openwrt/patch/luci/applications/luci-app-package-manager/0001-luci-app-package-manager-support-installing-uploaded.patch | patch -p1
 popd
 # rust
+apply_patch_once ../PATCH/pkgs/build-system/110-rust-limit-bootstrap-jobs.patch
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 RUST_VALUES_FILE="feeds/packages/lang/rust/rust-values.mk"
 if [ -f "${RUST_VALUES_FILE}" ]; then

@@ -1,0 +1,16 @@
+From: YAOF native build <builder@localhost>
+Subject: [PATCH] rust: bound bootstrap jobs independently of host CPU count
+
+Use the selected OpenWrt build concurrency for nested LLVM/Rust work. This
+changes resource scheduling only, not enabled components or compiler flags.
+
+--- a/feeds/packages/lang/rust/Makefile
++++ b/feeds/packages/lang/rust/Makefile
+@@ -91,6 +91,7 @@
+ 	TARGET_CFLAGS="$(TARGET_CFLAGS)" \
+ 	$(if $(RUSTC_TARGET_RUSTFLAGS),$(RUSTC_TARGET_CARGO_RUSTFLAGS)="$(RUSTC_TARGET_RUSTFLAGS)") \
+ 	$(PYTHON) $(HOST_BUILD_DIR)/x.py \
++		--jobs $(if $(CONFIG_PKG_BUILD_JOBS),$(CONFIG_PKG_BUILD_JOBS),4) \
+ 		--build-dir $(HOST_BUILD_DIR)/build \
+ 		dist build-manifest rustc rust-std cargo llvm-tools rust-src
+ endef
