@@ -20,6 +20,11 @@ class NativePreparationTests(unittest.TestCase):
         self.assertIn("imm_pkg", destinations.split())
         self.assertIn('start_clone "$immortalwrt_pkg_repo" master imm_pkg', source)
 
+    def test_removed_rust_patch_is_not_downloaded(self):
+        source = (ROOT / "SCRIPTS/02_prepare_package.sh").read_text()
+        self.assertNotIn("rust-lang/rust/commit/cdae267.patch", source)
+        self.assertIn("RUSTC_GLOBAL_CODEGEN_FLAGS", source)
+
     def test_target_preserves_patch_evidence(self):
         source = (ROOT / "SCRIPTS/X86/02_target_only.sh").read_text()
         self.assertNotRegex(source, r"find .*\.(orig|rej).*rm")
