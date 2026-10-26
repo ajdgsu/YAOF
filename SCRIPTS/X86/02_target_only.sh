@@ -4,6 +4,11 @@ set -Eeuo pipefail
 
 source ./00_resolve_openwrt_release.sh
 
+# Hidden packages ignore a direct seed request unless a default selects them.
+if ! grep -Fxq 'DEFAULT_PACKAGES += kmod-crypto-rsa' target/linux/x86/64/target.mk; then
+    printf '\n%s\n' 'DEFAULT_PACKAGES += kmod-crypto-rsa' >> target/linux/x86/64/target.mk
+fi
+
 # Use plain LZ4 for x86 SquashFS images. The high-compression -Xhc mode is
 # intentionally disabled.
 sed -i '/^SQUASHFSCOMP := /d' target/linux/x86/image/Makefile
