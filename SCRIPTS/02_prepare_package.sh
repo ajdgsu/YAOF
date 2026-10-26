@@ -660,6 +660,10 @@ stage_directory ../OpenWrt-Add-legacy/shortcut-fe ./package/new/shortcut-fe
 sed -i 's,usr/include/shortcut-fe,usr/include/shortcut-fe-legacy,g' \
     package/new/shortcut-fe/shortcut-fe/Makefile
 stage_directory ../lede/package/libs/pcre ./package/libs/pcre
+stage_directory ../wolplus-donor/luci-app-services-wolplus ./package/new/luci-app-services-wolplus
+pushd package/new/luci-app-services-wolplus
+apply_patch_once ../../../../PATCH/pkgs/wolplus/100-quote-wake-arguments.patch
+popd
 FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH=../PATCH/pkgs/fullconenat-nft/002-chain-notifier-api.patch
 FULLCONENAT_NFT_CHAIN_NOTIFIER_DEST=./package/new/lede_pkg/fullconenat-nft/patches/$(basename "${FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH}")
 stage_patch "${FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH}" "${FULLCONENAT_NFT_CHAIN_NOTIFIER_DEST}"

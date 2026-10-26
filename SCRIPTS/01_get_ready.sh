@@ -75,7 +75,7 @@ lucky="https://github.com/sirpdboy/luci-app-lucky.git"
 clone_destinations=(
   openwrt openwrt_snap immortalwrt_24 immortalwrt_23 lede lede_pkg_ma
   openwrt_ma openwrt_pkg_ma OpenWrt-Add dockerman docker_lib qosmate
-  luci-app-qosmate lucky tcp_brutal imm_pkg OpenWrt-Add-legacy
+  luci-app-qosmate lucky tcp_brutal imm_pkg OpenWrt-Add-legacy wolplus-donor
 )
 for clone_destination in "${clone_destinations[@]}"; do
   if [[ -e "$clone_destination" ]]; then
@@ -107,6 +107,7 @@ start_clone "$openwrt_pkg_repo" master openwrt_pkg_ma
 start_clone "$openwrt_add_repo" master OpenWrt-Add
 # Last verified legacy provider tree before the donor removed Shortcut-FE.
 start_clone "$openwrt_add_repo" ee22ca3f6086a525d62d702f9ad41c0e77941c40 OpenWrt-Add-legacy
+start_clone https://github.com/sundaqiang/openwrt-packages.git a4dae85236058a0f070f8dd9b70a920492cea054 wolplus-donor
 start_clone "$dockerman_repo" master dockerman
 start_clone "$docker_lib_repo" master docker_lib
 

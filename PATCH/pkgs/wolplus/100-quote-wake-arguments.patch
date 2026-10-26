@@ -1,0 +1,27 @@
+From: YAOF native build <builder@localhost>
+Subject: [PATCH] wolplus: validate and quote configured wake arguments
+
+--- a/luasrc/controller/wolplus.lua
++++ b/luasrc/controller/wolplus.lua
+@@ -9,10 +9,18 @@
+ end
+ 
+ function awake(sections)
+-	lan = x:get("wolplus",sections,"maceth")
+-	mac = x:get("wolplus",sections,"macaddr")
++	local lan = x:get("wolplus",sections,"maceth")
++	local mac = x:get("wolplus",sections,"macaddr")
++	if type(lan) ~= "string" or #lan == 0 or #lan > 15
++		or not lan:match("^[%w_.:%-]+$") or lan:sub(1, 1) == "-"
++		or type(mac) ~= "string"
++		or not mac:match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") then
++		luci.http.status(400, "Invalid wake arguments")
++		return
++	end
+     local e = {}
+-    cmd = "/usr/bin/etherwake -D -i " .. lan .. " -b " .. mac .. " 2>&1"
++	local shellquote = require("luci.util").shellquote
++	local cmd = "/usr/bin/etherwake -D -i " .. shellquote(lan) .. " -b " .. shellquote(mac) .. " 2>&1"
+ 	local p = io.popen(cmd)
+ 	local msg = ""
+ 	if p then

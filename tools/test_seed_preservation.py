@@ -7,6 +7,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class SeedPreservationTests(unittest.TestCase):
+    def test_wolplus_provider_and_safe_arguments(self):
+        source = (ROOT / 'SCRIPTS/01_get_ready.sh').read_text()
+        self.assertIn('a4dae85236058a0f070f8dd9b70a920492cea054', source)
+        prepare = (ROOT / 'SCRIPTS/02_prepare_package.sh').read_text()
+        self.assertIn('stage_directory ../wolplus-donor/luci-app-services-wolplus', prepare)
+        patch = (ROOT / 'PATCH/pkgs/wolplus/100-quote-wake-arguments.patch').read_text()
+        self.assertIn('shellquote(lan)', patch)
+        self.assertIn('shellquote(mac)', patch)
+
     def test_pinned_legacy_provider(self):
         source = (ROOT / 'SCRIPTS/01_get_ready.sh').read_text()
         self.assertIn('ee22ca3f6086a525d62d702f9ad41c0e77941c40', source)
