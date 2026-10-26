@@ -3,18 +3,22 @@ From: YAOF Patchstack <patchstack@local>
 Date: Fri, 24 Jul 2026 12:00:00 +0800
 Subject: [PATCH] net: ipv4: add C4 TCP congestion control
 
-Add the final C4 TCP congestion controller to vanilla Linux 6.12.94 while
+Add the C4 TCP congestion controller to Linux 6.12 while
 preserving CUBIC as the global default unless a target selects DEFAULT_C4.
 The patch consolidates the C4 evolution layers from c301 through c313.
 It keeps only the Linux networking changes required by the OpenWrt
 integration.
 
 Provenance:
-Final source: redmi_k90pmax_kernel/work/android-kernel/common/net/ipv4/tcp_c4.c
-  Final source SHA-256: aaf87b9c92c46d0624ce48e45b1d945b04c1250b4c1567b9bea7fa4096bcfee5
+Original Linux source: redmi_k90pmax_kernel/work/android-kernel/common/net/ipv4/tcp_c4.c
+  Original Linux source SHA-256: aaf87b9c92c46d0624ce48e45b1d945b04c1250b4c1567b9bea7fa4096bcfee5
   Evolution base revision: 82efd98459a2779ae85cb9ee55f9e7b61a31bf7a
   C4 source derivation revision: 879e7ef0f773d07f47926dc8ba3d86cc5e36f039
 Evolution metadata: redmi_k90pmax_kernel/c4-patchset.toml
+Algorithm updates: https://github.com/private-octopus/picoquic
+  C4 revision: 69c59742b8af64c7c43f3de01e1f599b09ff03f5 (2026-10-20)
+  Observed HEAD: 1d81a730ebbc0f4598f8127a7f43260a71a9ac7d (2026-10-25)
+See README.md alongside this patch for the Linux mapping and exclusions.
 
 Signed-off-by: YAOF Patchstack <patchstack@local>
 ---
@@ -25,7 +29,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
  	u32			  icsk_user_timeout;
  
 -	u64			  icsk_ca_priv[104 / sizeof(u64)];
-+	u64			  icsk_ca_priv[144 / sizeof(u64)];
++	u64			  icsk_ca_priv[208 / sizeof(u64)];
  #define ICSK_CA_PRIV_SIZE	  sizeof_field(struct inet_connection_sock, icsk_ca_priv)
  };
  
@@ -88,12 +92,13 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
  
 --- /dev/null
 +++ b/net/ipv4/tcp_c4.c
-@@ -0,0 +1,816 @@
+@@ -0,0 +1,937 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR ISC
 +/*
 + * TCP C4 congestion control, native Linux v0 port.
 + *
 + * Derived from picoquic C4, commit 879e7ef0f773d07f47926dc8ba3d86cc5e36f039.
++ * Algorithm updates through 69c59742b8af64c7c43f3de01e1f599b09ff03f5.
 + *
 + * Author: Christian Huitema
 + * Copyright (c) 2025, Private Octopus, Inc.
@@ -117,7 +122,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 + * This is deliberately not a line-for-line port.  The Linux adaptation uses
 + * rate_sample packet accounting, packet-timed rounds, TCP's PRR/RACK recovery,
 + * integer Q10/Q16 control values, kernel pacing, and uncompressed inline state
-+ * within the 144-byte congestion-control private area.  Resuming and seed-cwnd
++ * within the 208-byte congestion-control private area.  Resuming and seed-cwnd
 + * support, picoquic allocation/logging/options, and ECT(1)/L4S handling are
 + * intentionally omitted.  Standard TCP ECN feedback is used when negotiated,
 + * but is not required.
@@ -132,6 +137,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_GAIN_INITIAL	2048U
 +#define C4_GAIN_RECOVERY	960U
 +#define C4_GAIN_RECOVERY2	896U
++/* Preserve the upstream numeric gain, not its approximate percentage comment. */
++#define C4_GAIN_DRAIN		758U
 +#define C4_GAIN_CRUISE		1024U
 +#define C4_GAIN_PROBE		1088U
 +#define C4_GAIN_PUSH		1256U
@@ -143,6 +150,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_ECN_SHIFT		4U
 +#define C4_LOSS_SHIFT		4U
 +#define C4_MIN_RTT_US		1000U
++/* Bound intermediate gain and BDP arithmetic even for extreme rate samples. */
++#define C4_MAX_RATE		(U64_MAX / USEC_PER_SEC)
 +#define C4_MAX_JITTER_US	250000U
 +#define C4_MAX_DELAY_US	25000U
 +#define C4_CRUISE_ROUNDS	2U
@@ -153,6 +162,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_STATE_UNDO_OBSERVED	0x08
 +#define C4_STATE_UNDO_VALID	0x10
 +#define C4_STATE_RTT_DELAYED_BASE	0x20
++#define C4_STATE_CONGESTION	0x40
 +
 +enum c4_mode {
 +	C4_INITIAL,
@@ -168,8 +178,18 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	C4_CONGESTION_LOSS,
 +};
 +
-+/* 144-byte uncompressed Linux state, inline and pointer-free. */
++/* Inline, pointer-free state, including the loss-undo snapshot. */
 +struct c4 {
++	u64 recent_rate;
++	u64 previous_rate;
++	u64 initial_last_time;
++	u64 undo_recent_rate;
++	u64 undo_previous_rate;
++	u64 undo_initial_last_time;
++	u32 backlog_q10;
++	u32 undo_backlog_q10;
++	u32 undo_congestion;
++	u32 undo_max_rtt_us;
 +	u64 nominal_rate;		/* bytes per second */
 +	u64 prior_rate;
 +	u64 round_peak_rate;		/* non-app-limited peak, bytes per second */
@@ -188,18 +208,20 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	u32 ecn_alpha_q10;
 +	u32 undo_loss_ewma_q16;
 +	u32 undo_ecn_alpha_q10;
-+	u32 undo_gain_q10;
-+	u32 undo_mode;
++	u16 undo_gain_q10;
++	u16 undo_mode;
++	u32 undo_startup_credit_q9;
 +	u32 undo_cruise_rounds;
 +	u32 undo_rounds_without_growth;
 +	u32 undo_probe_succeeded;
-+	u32 undo_low_rate_rounds;
-+	u32 gain_q10;
-+	u32 mode;
++	u32 undo_recent_congestions;
++	u16 gain_q10;
++	u16 mode;
++	u32 startup_credit_q9;
 +	u32 cruise_rounds;
 +	u32 rounds_without_growth;
 +	u32 probe_succeeded;
-+	u32 low_rate_rounds;
++	u32 recent_congestions;
 +	u32 state_flags;
 +};
 +
@@ -257,16 +279,45 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +static void c4_enter(struct sock *sk, enum c4_mode mode)
 +{
 +	struct c4 *ca = c4_ca(sk);
++	struct tcp_sock *tp = tcp_sk(sk);
++	u32 old_mode = ca->mode;
 +
 +	ca->mode = mode;
 +	switch (mode) {
 +	case C4_INITIAL:
 +		ca->gain_q10 = C4_GAIN_INITIAL;
 +		ca->rounds_without_growth = 0;
-+		ca->initial_cwnd = tcp_snd_cwnd(tcp_sk(sk));
++		ca->max_rtt_us = max(tp->srtt_us >> 3, C4_MIN_RTT_US);
++		ca->initial_cwnd = clamp_t(u64,
++			div64_u64(mul_u64_u32_div(ca->nominal_rate,
++				ca->max_rtt_us, USEC_PER_SEC), max(tp->mss_cache, 1U)),
++			1, tp->snd_cwnd_clamp);
++		ca->initial_last_time = 0;
++		ca->startup_credit_q9 = 0;
++		tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
++		ca->recent_rate = 0;
++		ca->state_flags &= ~C4_STATE_CONGESTION;
++		ca->prior_rate = ca->nominal_rate;
++		ca->ecn_alpha_q10 = 0;
 +		break;
 +	case C4_RECOVERY:
-+		ca->gain_q10 = C4_GAIN_RECOVERY;
++		if (old_mode == C4_INITIAL && ca->nominal_rate) {
++			u64 bytes = (u64)ca->initial_cwnd * max(tp->mss_cache, 1U) / 2;
++			u64 max_bytes = mul_u64_u32_div(ca->nominal_rate,
++							 U32_MAX, USEC_PER_SEC);
++			u64 rtt = mul_u64_u64_div_u64(min(bytes, max_bytes),
++						 USEC_PER_SEC, ca->nominal_rate);
++
++			ca->max_rtt_us = clamp_t(u64, rtt, C4_MIN_RTT_US, U32_MAX);
++			ca->backlog_q10 = rtt >= C4_MIN_RTT_US &&
++				(tp->srtt_us >> 3) >= C4_MIN_RTT_US ? C4_Q10 : 0;
++		}
++		if ((tp->srtt_us >> 3) < C4_MIN_RTT_US)
++			ca->backlog_q10 = 0;
++		ca->gain_q10 = ca->backlog_q10 <= C4_Q10 - C4_GAIN_RECOVERY ?
++			C4_GAIN_RECOVERY :
++			ca->backlog_q10 <= C4_Q10 - C4_GAIN_RECOVERY2 ?
++			C4_GAIN_RECOVERY2 : C4_GAIN_DRAIN;
 +		break;
 +	case C4_CRUISING:
 +		ca->gain_q10 = C4_GAIN_CRUISE;
@@ -292,8 +343,10 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	if (rs->delivered <= 0 || rs->interval_us <= 0)
 +		return 0;
 +
-+	rate = (u64)rs->delivered * max(tp->mss_cache, 1U);
-+	return mul_u64_u64_div_u64(rate, USEC_PER_SEC, rs->interval_us);
++	rate = min_t(u64, (u64)rs->delivered * max(tp->mss_cache, 1U),
++			 C4_MAX_RATE);
++	return min_t(u64, div64_u64(rate * USEC_PER_SEC, rs->interval_us),
++			 C4_MAX_RATE);
 +}
 +
 +static bool c4_rtt_sample_usable(const struct c4 *ca,
@@ -383,16 +436,23 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +
 +static void c4_snapshot_loss(struct c4 *ca)
 +{
++	ca->undo_recent_rate = ca->recent_rate;
++	ca->undo_previous_rate = ca->previous_rate;
++	ca->undo_initial_last_time = ca->initial_last_time;
++	ca->undo_backlog_q10 = ca->backlog_q10;
++	ca->undo_congestion = ca->state_flags & C4_STATE_CONGESTION;
++	ca->undo_max_rtt_us = ca->max_rtt_us;
 +	ca->undo_nominal_rate = ca->nominal_rate;
 +	ca->undo_prior_rate = ca->prior_rate;
 +	ca->undo_loss_ewma_q16 = ca->loss_ewma_q16;
 +	ca->undo_ecn_alpha_q10 = ca->ecn_alpha_q10;
++	ca->undo_startup_credit_q9 = ca->startup_credit_q9;
 +	ca->undo_gain_q10 = ca->gain_q10;
 +	ca->undo_mode = ca->mode;
 +	ca->undo_cruise_rounds = ca->cruise_rounds;
 +	ca->undo_rounds_without_growth = ca->rounds_without_growth;
 +	ca->undo_probe_succeeded = ca->probe_succeeded;
-+	ca->undo_low_rate_rounds = ca->low_rate_rounds;
++	ca->undo_recent_congestions = ca->recent_congestions;
 +	ca->state_flags |= C4_STATE_UNDO_VALID;
 +}
 +
@@ -403,16 +463,24 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	if (!(ca->state_flags & C4_STATE_UNDO_VALID))
 +		return false;
 +
++	ca->recent_rate = ca->undo_recent_rate;
++	ca->previous_rate = ca->undo_previous_rate;
++	ca->initial_last_time = ca->undo_initial_last_time;
++	ca->backlog_q10 = ca->undo_backlog_q10;
++	ca->max_rtt_us = ca->undo_max_rtt_us;
++	ca->state_flags = (ca->state_flags & ~C4_STATE_CONGESTION) |
++			  ca->undo_congestion;
 +	ca->nominal_rate = ca->undo_nominal_rate;
 +	ca->prior_rate = ca->undo_prior_rate;
 +	ca->loss_ewma_q16 = ca->undo_loss_ewma_q16;
 +	ca->ecn_alpha_q10 = ca->undo_ecn_alpha_q10;
++	ca->startup_credit_q9 = ca->undo_startup_credit_q9;
 +	ca->gain_q10 = ca->undo_gain_q10;
 +	ca->mode = ca->undo_mode;
 +	ca->cruise_rounds = ca->undo_cruise_rounds;
 +	ca->rounds_without_growth = ca->undo_rounds_without_growth;
 +	ca->probe_succeeded = ca->undo_probe_succeeded;
-+	ca->low_rate_rounds = ca->undo_low_rate_rounds;
++	ca->recent_congestions = ca->undo_recent_congestions;
 +	ca->state_flags &= ~C4_STATE_UNDO_VALID;
 +	c4_rebase_stats(sk);
 +	c4_reset_era(sk);
@@ -433,7 +501,23 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	return ca->nominal_rate >= target;
 +}
 +
-+static bool c4_finish_round(struct sock *sk)
++static bool c4_reenter_initial(struct sock *sk, u64 reentry_rate)
++{
++	struct c4 *ca = c4_ca(sk);
++
++	/* Gate only: keep this ACK's peak and rate updates in the next round. */
++	if (ca->mode == C4_INITIAL || (!ca->round_peak_rate && !reentry_rate) ||
++	    ca->max_rtt_us <= 50000 ||
++	    max(ca->nominal_rate, reentry_rate) >= 1000000 ||
++	    (u64)5 * ca->min_rtt_us >= (u64)2 * ca->max_rtt_us ||
++	    !ca->initial_last_time ||
++	    tcp_sk(sk)->tcp_mstamp - ca->initial_last_time <= USEC_PER_SEC)
++		return false;
++	c4_enter(sk, C4_INITIAL);
++	return true;
++}
++
++static bool c4_finish_round(struct sock *sk, u64 reentry_rate)
 +{
 +	struct c4 *ca = c4_ca(sk);
 +	u64 old_nominal_rate = ca->nominal_rate;
@@ -444,7 +528,34 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	u32 corrected_max;
 +	bool app_limited = !ca->round_peak_rate;
 +
++	ca->recent_rate = max(ca->recent_rate, ca->round_peak_rate);
 +	if (ca->mode == C4_RECOVERY) {
++		if (c4_reenter_initial(sk, reentry_rate))
++			return true;
++		if (!ca->initial_last_time)
++			ca->initial_last_time = tcp_sk(sk)->tcp_mstamp;
++		ca->backlog_q10 -= min(ca->backlog_q10, C4_Q10 - ca->gain_q10);
++		if (ca->probe_succeeded) {
++			ca->recent_congestions = 0;
++		} else if (ca->state_flags & C4_STATE_CONGESTION) {
++			if (ca->recent_congestions < 2)
++				ca->recent_congestions++;
++			if (ca->recent_congestions == 2 && ca->recent_rate &&
++			    ca->nominal_rate > ca->recent_rate) {
++				ca->nominal_rate = ca->recent_rate;
++				ca->recent_congestions = 0;
++			}
++		} else {
++			ca->recent_congestions = 0;
++			if (ca->recent_rate &&
++			    (tcp_sk(sk)->srtt_us >> 3) > C4_MIN_RTT_US)
++				ca->nominal_rate = min(ca->nominal_rate,
++					max(ca->recent_rate, ca->previous_rate));
++		}
++		if (ca->recent_rate)
++			ca->previous_rate = ca->recent_rate;
++		ca->recent_rate = 0;
++		ca->state_flags &= ~C4_STATE_CONGESTION;
 +		c4_rebase_stats(sk);
 +		ca->loss_ewma_q16 = 0;
 +		ca->ecn_alpha_q10 = 0;
@@ -477,6 +588,9 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	c4_update_loss(sk);
 +	c4_update_ecn(sk);
 +
++	if (c4_reenter_initial(sk, reentry_rate))
++		return true;
++
 +	switch (ca->mode) {
 +	case C4_INITIAL:
 +		if (app_limited) {
@@ -496,18 +610,6 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	case C4_RECOVERY:
 +		break;
 +	case C4_CRUISING:
-+		if (!app_limited && ca->round_peak_rate < ca->nominal_rate) {
-+			if (ca->low_rate_rounds != U8_MAX)
-+				ca->low_rate_rounds++;
-+			if (ca->low_rate_rounds == 1)
-+				c4_set_nominal_rate(ca, ca->nominal_rate -
-+						((ca->nominal_rate - ca->round_peak_rate) >> 2));
-+			else
-+				c4_set_nominal_rate(ca, ca->round_peak_rate +
-+						((ca->nominal_rate - ca->round_peak_rate) >> 2));
-+		} else if (ca->round_peak_rate >= ca->nominal_rate) {
-+			ca->low_rate_rounds = 0;
-+		}
 +		if (!app_limited && ca->cruise_rounds)
 +			ca->cruise_rounds--;
 +		if (!ca->cruise_rounds)
@@ -521,6 +623,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +		break;
 +	case C4_PUSHING:
 +		if (!c4_rate_is_growing(ca)) {
++			ca->backlog_q10 += min(ca->gain_q10 - C4_Q10,
++					      U32_MAX - ca->backlog_q10);
 +			c4_enter(sk, C4_RECOVERY);
 +		} else {
 +			ca->prior_rate = ca->nominal_rate;
@@ -546,10 +650,13 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	else
 +		ca->state_flags &= ~C4_STATE_UNDO_VALID;
 +
++	ca->recent_rate = max(ca->recent_rate, ca->round_peak_rate);
++	ca->state_flags |= C4_STATE_CONGESTION;
 +	ca->probe_succeeded = 0;
-+	ca->low_rate_rounds = 0;
++	if (event == C4_CONGESTION_ECN)
++		ca->backlog_q10 = 0;
 +	if (ca->mode == C4_RECOVERY) {
-+		ca->gain_q10 = C4_GAIN_RECOVERY2;
++		ca->gain_q10 = min(ca->gain_q10, C4_GAIN_RECOVERY2);
 +		c4_reset_era(sk);
 +		c4_set_pacing_rate(sk);
 +		return;
@@ -585,6 +692,10 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +				mul_u64_u32_div(ca->nominal_rate, beta_q10, C4_Q10));
 +	}
 +	c4_enter(sk, C4_RECOVERY);
++	if (event == C4_CONGESTION_ECN) {
++		ca->backlog_q10 = 0;
++		ca->gain_q10 = C4_GAIN_RECOVERY;
++	}
 +	c4_set_pacing_rate(sk);
 +}
 +
@@ -773,6 +884,9 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	u32 sensitivity;
 +	bool round_start, control_changed = false, suppress_cwnd;
 +	bool recovery_sample = ca->mode == C4_RECOVERY;
++	bool was_initial = ca->mode == C4_INITIAL;
++	bool congested_sample = recovery_sample &&
++				(ca->state_flags & C4_STATE_CONGESTION);
 +	u32 delay;
 +
 +	suppress_cwnd = (ca->state_flags & C4_STATE_UNDO_OBSERVED) &&
@@ -791,6 +905,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +				      false);
 +		ca = c4_ca(sk);
 +		control_changed = true;
++		congested_sample = true;
 +	}
 +	if (ca->state_flags & C4_STATE_DEFER_REAPPLY) {
 +		ca->state_flags &= ~C4_STATE_DEFER_REAPPLY;
@@ -808,20 +923,28 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +
 +	if (!rs->is_app_limited)
 +		sample_rate = c4_sample_rate(tp, rs);
-+	round_start = !before(rs->prior_delivered, ca->next_round_delivered);
++	/* Invalid delivery samples cannot complete a model round. */
++	round_start = rs->delivered > 0 && rs->interval_us > 0 &&
++		      !before(rs->prior_delivered, ca->next_round_delivered);
 +	if (round_start || c4_rtt_sample_usable(ca, rs) ||
 +	    sample_rate > ca->round_peak_rate)
 +		ca->state_flags &= ~C4_STATE_UNDO_VALID;
 +	if (round_start) {
-+		control_changed |= c4_finish_round(sk);
++		control_changed |= c4_finish_round(sk,
++				congested_sample ? 0 : sample_rate);
 +		ca = c4_ca(sk);
 +	}
-+	c4_update_rtt(ca, rs);
++	/* The ACK that reenters startup still measures the old phase. */
++	if (was_initial || ca->mode != C4_INITIAL)
++		c4_update_rtt(ca, rs);
 +	if (sample_rate) {
 +		ca->round_peak_rate = max(ca->round_peak_rate, sample_rate);
-+		if (sample_rate > ca->nominal_rate) {
++		if (sample_rate > ca->nominal_rate && !congested_sample &&
++		    !(ca->mode == C4_RECOVERY &&
++		      (ca->state_flags & C4_STATE_CONGESTION))) {
 +			c4_set_nominal_rate(ca, sample_rate);
-+			ca->low_rate_rounds = 0;
++			ca->backlog_q10 = 0;
++			ca->recent_congestions = 0;
 +			control_changed = true;
 +		}
 +	}
@@ -829,19 +952,21 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	if (ca->mode == C4_INITIAL && rs->acked_sacked &&
 +	    tcp_is_cwnd_limited(sk)) {
 +		u32 old_cwnd = tcp_snd_cwnd(tp);
++		u32 old_floor = ca->initial_cwnd;
++		u64 credit = ((u64)rs->acked_sacked << 9) >>
++			     (3 * min(ca->rounds_without_growth, 3U));
++		u32 acked;
 +
-+		tcp_slow_start(tp, rs->acked_sacked);
-+		if (old_cwnd != tcp_snd_cwnd(tp))
++		credit += ca->startup_credit_q9;
++		acked = min_t(u64, credit >> 9, U32_MAX);
++		ca->startup_credit_q9 = credit & 511;
++		tcp_slow_start(tp, acked);
++		ca->initial_cwnd = min_t(u64, (u64)ca->initial_cwnd + acked,
++					 tp->snd_cwnd_clamp);
++		if (old_cwnd != tcp_snd_cwnd(tp) || old_floor != ca->initial_cwnd)
 +			ca->state_flags &= ~C4_STATE_UNDO_VALID;
-+		control_changed |= old_cwnd != tcp_snd_cwnd(tp);
-+	}
-+	if (ca->mode == C4_INITIAL) {
-+		u32 old_initial_cwnd = ca->initial_cwnd;
-+
-+		if (old_initial_cwnd != tcp_snd_cwnd(tp))
-+			ca->state_flags &= ~C4_STATE_UNDO_VALID;
-+		ca->initial_cwnd = tcp_snd_cwnd(tp);
-+		control_changed |= old_initial_cwnd != ca->initial_cwnd;
++		control_changed |= old_cwnd != tcp_snd_cwnd(tp) ||
++				   old_floor != ca->initial_cwnd;
 +	}
 +	sensitivity = c4_sensitivity_for_rate(ca->nominal_rate);
 +	delay = c4_delay_threshold(ca, sensitivity);
