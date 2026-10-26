@@ -654,6 +654,12 @@ sed -i 's,@CMDLINE@ noinitrd,noinitrd mitigations=off,g' target/linux/x86/image/
 
 ### ADD PKG 部分 ###
 cp -rf ../OpenWrt-Add ./package/new
+# Preserve enabled legacy modules removed from the moving donor branch.
+stage_directory ../OpenWrt-Add-legacy/shortcut-fe ./package/new/shortcut-fe
+# Legacy and QCA v2 export different sfe.h APIs. Keep their staging paths apart.
+sed -i 's,usr/include/shortcut-fe,usr/include/shortcut-fe-legacy,g' \
+    package/new/shortcut-fe/shortcut-fe/Makefile
+stage_directory ../lede/package/libs/pcre ./package/libs/pcre
 FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH=../PATCH/pkgs/fullconenat-nft/002-chain-notifier-api.patch
 FULLCONENAT_NFT_CHAIN_NOTIFIER_DEST=./package/new/lede_pkg/fullconenat-nft/patches/$(basename "${FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH}")
 stage_patch "${FULLCONENAT_NFT_CHAIN_NOTIFIER_PATCH}" "${FULLCONENAT_NFT_CHAIN_NOTIFIER_DEST}"

@@ -11,7 +11,15 @@ clone_repo() {
   local branch_name="$2"
   local target_dir="$3"
   # 克隆仓库到目标目录，并指定分支名和深度为1
-  git clone -b "$branch_name" --depth 1 "$repo_url" "$target_dir"
+  if [[ "$branch_name" =~ ^[0-9a-f]{40}$ ]]; then
+    git init -q "$target_dir"
+    git -C "$target_dir" remote add origin "$repo_url"
+    git -C "$target_dir" fetch --depth 1 origin "$branch_name"
+    git -C "$target_dir" checkout --detach FETCH_HEAD
+    test "$(git -C "$target_dir" rev-parse HEAD)" = "$branch_name"
+  else
+    git clone -b "$branch_name" --depth 1 "$repo_url" "$target_dir"
+  fi
 }
 
 source "./SCRIPTS/00_resolve_openwrt_release.sh"
@@ -67,7 +75,7 @@ lucky="https://github.com/sirpdboy/luci-app-lucky.git"
 clone_destinations=(
   openwrt openwrt_snap immortalwrt_24 immortalwrt_23 lede lede_pkg_ma
   openwrt_ma openwrt_pkg_ma OpenWrt-Add dockerman docker_lib qosmate
-  luci-app-qosmate lucky tcp_brutal imm_pkg
+  luci-app-qosmate lucky tcp_brutal imm_pkg OpenWrt-Add-legacy
 )
 for clone_destination in "${clone_destinations[@]}"; do
   if [[ -e "$clone_destination" ]]; then
@@ -97,6 +105,8 @@ start_clone "$lede_pkg_repo" master lede_pkg_ma
 start_clone "$openwrt_repo" main openwrt_ma
 start_clone "$openwrt_pkg_repo" master openwrt_pkg_ma
 start_clone "$openwrt_add_repo" master OpenWrt-Add
+# Last verified legacy provider tree before the donor removed Shortcut-FE.
+start_clone "$openwrt_add_repo" ee22ca3f6086a525d62d702f9ad41c0e77941c40 OpenWrt-Add-legacy
 start_clone "$dockerman_repo" master dockerman
 start_clone "$docker_lib_repo" master docker_lib
 
