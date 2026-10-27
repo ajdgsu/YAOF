@@ -1,136 +1,65 @@
-# Ubuntu 24.04 OpenWrt Container Runbook
+# OpenWrt X86_64 Build Runbook
 
-This repository uses the existing Ubuntu 24.04 build container. Inspect and edit files on the host, but run every preparation, dependency probe, clone, feed operation, download, build, test, and interactive compilation through `tools/yaof-container`. Never build on the host and never enter the container with direct `docker exec`.
+Builds may run directly on the host or in another explicitly isolated environment. The build method must match the current task instructions. Do not assume a container, proxy, or network service is available. Do not install system dependencies or alter host networking to make a build work. Record the compiler, OpenWrt toolchain, cached source revisions, and build outputs used for each build.
 
-## Container wrapper and health gate
-
-Run these commands from the repository root on the host:
-
-```text
-tools/yaof-container build
-tools/yaof-container up
-tools/yaof-container status
-tools/yaof-container shell
-tools/yaof-container exec -- <command> [args...]
-tools/yaof-container down
-```
-
-`build` only builds the image. `up` starts or recreates `yaof` and waits up to 90 seconds for the firewall, redsocks, and local Stubby resolver health gate. A failed or timed-out gate is a hard stop: do not bypass it or run build work elsewhere. `status` reports service and health state; when diagnosis is needed, host-side observation may use `docker compose logs --tail=100 yaof`, but Docker must not be used to run build commands.
-
-`shell` and `exec` run workloads as UID/GID `1000:1000`; this is mandatory for all build commands. Confirm it before compiling:
-
-```bash
-tools/yaof-container exec -- id
-tools/yaof-container exec -- bash -lc 'test "$(id -u):$(id -g)" = 1000:1000'
-tools/yaof-container exec -- bash -lc 'cd openwrt && make -j1 tools/fakeroot/compile V=s && test -x staging_dir/host/bin/fakeroot'
-```
-
-The base container does not provide a global `fakeroot`; OpenWrt builds its own at `staging_dir/host/bin/fakeroot`. After that target succeeds, test a temporary file inside fakeroot: its fakeroot view may be `0:0`, while `stat` outside fakeroot must still show the real builder UID/GID `1000:1000`. Do not use `sudo`, a root shell, or a root-owned build tree. The bind-mounted repository and named `/home/builder` volume survive `up`/`down`; `down` does not remove either.
-
-The container routes traffic through SOCKS5 `192.168.1.1:1091` and authenticated local Cloudflare malware-filtering DNS-over-TLS. This is access policy, not source integrity. Keep OpenWrt package hash checks enabled and record the resolved OpenWrt release/tag/commit plus the tag/commit (or immutable archive hash) of every cloned or downloaded source before calling a build trusted. The current preparation scripts derive releases from web content and use mutable or shallow clones, so review and record their actual revisions; do not call the build reproducible or malware-free based on DNS filtering.
+For native builds, use an independent project-local tree when the existing tree contains user changes or stale outputs. Preserve prior images, prepared trees, logs, and provenance before rebuilding. Run preparation, compilation, tests, and interactive compilation as separate observable commands. Use the existing OpenWrt host tools and toolchain when they are available.
 
 ## X86_64 build workflow
 
-Do not run a whole GitHub Actions workflow or copy its control flow into one large command. The workflow is a reference for ordering and target names only. Network-sensitive operations such as feeds, downloads, package compilation, and firmware compilation must be issued as separate, directly observable `tools/yaof-container exec` commands. Scripts are appropriate for coherent batch clone, deterministic patch, and other mechanical batch operations, but they must not hide network retries, source revision capture, or build failures.
+Do not run a whole GitHub Actions workflow or copy its control flow into one large command. The workflow is a reference for ordering and target names only. Network-sensitive operations such as feeds, downloads, package compilation, and firmware compilation must be issued as separate, directly observable commands. Scripts are appropriate for coherent batch clone, deterministic patch, and other mechanical batch operations, but they must not hide network retries, source revision capture, or build failures.
 
 Before preparation, inspect every fixed clone destination used by `SCRIPTS/01_get_ready.sh`, including `openwrt/`, `openwrt_snap/`, `immortalwrt_24/`, `immortalwrt_23/`, and `lede/`. Preparation is destructive and non-idempotent: do not rerun it over existing or partial trees. Archive or deliberately remove a destination only after inspecting it, or skip preparation and use an independently verified existing tree.
 
 Use the target-specific X86 seed and scripts, preserving the host repository and the `openwrt` working directory. The following is an example of the stage boundaries; substitute the approved values and inspect each result before continuing:
 
 ```bash
-# 1. Start and verify the isolated build environment.
-tools/yaof-container up
-tools/yaof-container exec -- bash -lc 'id; test "$(id -u):$(id -g)" = 1000:1000'
+# 1. Confirm the selected native toolchain and the independent build tree.
+# Record compiler versions, cached source hashes, configuration, and Git state.
+# Do not reuse stale kernel objects after changing a persistent patch.
 
 # 2. Prepare only after clone destinations have been inspected.
-tools/yaof-container exec -- bash -lc 'cp -r SCRIPTS/X86/. SCRIPTS/ && cp -r SCRIPTS/. ./ && bash 01_get_ready.sh'
+# Use the repository scripts from the selected native tree.
 
-# 3. From the OpenWrt tree, keep network-sensitive work independently observable.
-tools/yaof-container exec -- bash -lc 'cd openwrt && cp -r ../SCRIPTS/. ./'
-tools/yaof-container exec -- bash -lc 'cd openwrt && ./scripts/feeds update -a'
-tools/yaof-container exec -- bash -lc 'cd openwrt && ./scripts/feeds install -a'
+# 3. Keep network-sensitive work independently observable when it is needed.
+# Do not refresh feeds when pinned feeds and package sources are already preserved.
 
 # Read 02_prepare_package.sh and 02_target_only.sh as command sources. Run their
-# network operations directly; batch only the deterministic patch/copy/sed work.
-# Purely mechanical helpers such as translation, ACL generation, UPX removal,
-# and permission repair may be run separately after their contents are reviewed.
-tools/yaof-container exec -- bash -lc 'cd openwrt && bash 04_remove_upx.sh'
-tools/yaof-container exec -- bash -lc 'cd openwrt && cp ../SEED/X86/config.seed .config'
-tools/yaof-container exec -- bash -lc 'cd openwrt && bash 03_convert_translation.sh'
-tools/yaof-container exec -- bash -lc 'cd openwrt && bash 05_create_acl_for_luci.sh -a'
-tools/yaof-container exec -- bash -lc 'cd openwrt && chmod 755 ./08_fix_permissions.sh && bash 08_fix_permissions.sh'
+# deterministic patch/copy/configuration blocks separately and retain logs.
 
 # 4. Record the exact tree and source revisions, then resolve configuration.
-tools/yaof-container exec -- bash -lc 'cd openwrt && git describe --tags --always --dirty && git rev-parse HEAD && git submodule status --recursive'
-tools/yaof-container exec -- bash -lc 'cd openwrt && make defconfig'
+make -C openwrt defconfig
 
-# 5. Download separately; keep package hashes enabled and inspect the log even
-# when make returns zero because an individual source fetch may still fail.
-tools/yaof-container exec -- bash -lc 'cd openwrt && make download -j4 V=s'
+# 5. Download separately when required. Keep package hashes enabled and inspect
+# the complete log even when an individual source fetch may still fail.
+make -C openwrt download -j4 V=s
 
-# 6. Compile in parallel after download succeeds, then inspect artifacts.
-tools/yaof-container exec -- bash -lc 'cd openwrt && make -j"$(($(nproc) + 1))" V=s'
-tools/yaof-container exec -- bash -lc 'cd openwrt && find bin/targets -type f -maxdepth 5 -printf "%p %s bytes\\n" | sort'
+# 6. Compile in parallel after downloads succeed, then inspect artifacts.
+make -C openwrt -j8 V=s
+find openwrt/bin/targets -type f -maxdepth 5 -printf "%p %s bytes\\n" | sort
 ```
 
 The examples are stages, not a script to paste as one block. Run `make download`, package refreshes, and compilation separately so the first failing package and log remain attributable. A successful Actions job or `defconfig` does not prove a firmware build; verify the actual compile output and final image metadata.
 
 ## Current verified X86 build and acceptance plan
 
-The current baseline is branch `25.12`, an OpenWrt `v25.12.x` release resolved
-by `SCRIPTS/00_resolve_openwrt_release.sh`, Linux 6.12, built-in C4 with FQ as
-the X86 defaults, and plain-LZ4 SquashFS. The last complete local validation
-resolved `v25.12.5`; treat that as a known-good reference, not a permanent pin.
-Resolve and record the current tag and commit again for every new build.
+The current baseline is branch `25.12`, an OpenWrt `v25.12.x` release recorded
+in the build provenance, Linux 6.12, built-in C4 with FQ as the X86 defaults,
+and plain-LZ4 SquashFS. Preserve the recorded release and source revisions for
+comparison. Do not silently replace pinned inputs with moving branches.
 
 Run the build as these observable phases:
 
-1. Confirm that the container is healthy and that `id -u:id -g` is
-   `1000:1000`. Confirm that no prior `make`, QEMU, or OpenWrt `faked` process
-   is still using a materialized tree.
-2. Resolve the release inside the container and retain it in an ignored
-   `.yaof-*` file so separate wrapper calls use the same value:
-
-   ```bash
-   tools/yaof-container exec -- bash -lc '
-     release="$(./SCRIPTS/00_resolve_openwrt_release.sh)" &&
-     printf "%s\n" "$release" > .yaof-openwrt-release
-   '
-   ```
-
-3. Inspect every destination in `clone_destinations` in
-   `SCRIPTS/01_get_ready.sh`. With no destination present, copy the X86 script
-   set and run preparation with the recorded release:
-
-   ```bash
-   tools/yaof-container exec -- bash -lc '
-     export OPENWRT_RELEASE="$(cat .yaof-openwrt-release)" &&
-     cp -r SCRIPTS/X86/. SCRIPTS/ &&
-     cp -r SCRIPTS/. ./ &&
-     bash 01_get_ready.sh
-   '
-   ```
-
-4. Copy `SCRIPTS/` into `openwrt/`. Treat `02_prepare_package.sh` and
-   `02_target_only.sh` as reviewed command sources. Run their network actions
-   separately: feed update/install, fixed commit-patch downloads, the
-   `vmlinux-btf` clone, Rockchip patch downloads, Rust and miniupnp patch
-   downloads, package-manager patches, and the X86 `profiles.json` download.
-   Record every resolved source revision or downloaded archive hash. Then run
-   the deterministic patch/copy/configuration blocks and the X86 target block.
-   Do not retain an ad-hoc replay script after the build.
-5. Run translation, ACL, permission, and seed operations, then capture
-   `git describe`, `git rev-parse HEAD`, submodules, feeds, `.config`, and all
-   externally imported source revisions before `make defconfig`.
-6. Build OpenWrt's own fakeroot, run `make download -j4 V=s`, and inspect the
-   complete download log. Compile with `make -j"$(($(nproc) + 1))" V=s` only
-   after downloads succeed. A targeted low-concurrency retry does not replace
-   this final full parallel build.
-7. Verify `bin/targets/x86/64/sha256sums`, every gzip artifact, the actual
+1. Confirm that no prior make, QEMU, or OpenWrt `faked` process is using the
+   selected materialized tree.
+2. Inspect every destination in `clone_destinations` before preparation.
+3. Record the OpenWrt release, source revisions, feeds, `.config`, and imported
+   source hashes before `make defconfig`.
+4. Use the existing host tools and OpenWrt toolchain. Run `make download -j4 V=s`
+   only when cached inputs are insufficient. Compile with `make -j8 V=s` after
+   downloads succeed. A targeted retry does not replace the full parallel build.
+5. Verify `bin/targets/x86/64/sha256sums`, every gzip artifact, the actual
    `mksquashfs4` arguments, and the SquashFS superblock. Inspect the image and
-   confirm it contains `qca-nss-sfe.ko`, `ecm.ko`, `shortcut-fe.ko`,
-   `shortcut-fe-ipv6.ko`, `shortcut-fe-cm.ko`, `nft_fullcone.ko`, and
-   `/etc/init.d/sfe-ecm` before runtime testing.
+   confirm its required kernel modules before runtime testing.
 
 The last reviewed image used `mksquashfs4 -comp lz4`, no `-Xhc`, a 4096-byte
 SquashFS block size, and passed `gzip -t`, `sha256sum -c`, module stress, QEMU
@@ -139,9 +68,9 @@ the same gates; historical hashes or logs are not proof for a new image.
 
 ## Module stress and QEMU runtime acceptance
 
-Run `tools/qemu-c4-acceptance` on the host as the normal user after the
-container build. The script itself uses passwordless `sudo` only for KVM and
-temporary network resources. `RUN_DIR` must not already exist:
+Run `tools/qemu-c4-acceptance` as the normal user after the native build.
+The script itself uses passwordless `sudo` only for KVM and temporary network
+resources. `RUN_DIR` must not already exist:
 
 ```bash
 WAN_PARENT=enp10s0 \
