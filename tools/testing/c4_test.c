@@ -146,6 +146,7 @@ static void reentry_current_ack_rate(void)
 				.prior_delivered = 100, .acked_sacked = 1 };
 
 			sk.tp.mss_cache = rates[i];
+			ca->mss_cache = rates[i];
 			ca->nominal_rate = 100000;
 			ca->max_rtt_us = 100000;
 			ca->min_rtt_us = 10000;
@@ -399,6 +400,30 @@ static void retransmitted_samples_are_not_model_evidence(void)
 	assert(state->nominal_rate == 20000000);
 }
 
+static void mss_change_quarantines_rate_samples(void)
+{
+	struct sock sk = fresh();
+	struct c4 *ca = c4_ca(&sk);
+	struct rate_sample rs = { .delivered = 10, .interval_us = 10000,
+		.prior_delivered = UINT32_MAX };
+
+	ca->nominal_rate = 1000000;
+	ca->max_rtt_us = 10000;
+	ca->round_peak_rate = 900000;
+	sk.tp.in_flight = 3;
+	sk.tp.mss_cache = 1200;
+	c4_cong_control(&sk, 0, 0, &rs);
+	assert(ca->nominal_rate == 1000000);
+	assert(ca->round_peak_rate == 0);
+	assert(ca->state_flags & C4_STATE_MSS_QUARANTINE);
+
+	/* Old-MSS delivery cannot end quarantine while packets remain in flight. */
+	sk.tp.in_flight = 0;
+	c4_cong_control(&sk, 0, 0, &rs);
+	assert(!(ca->state_flags & C4_STATE_MSS_QUARANTINE));
+	assert(ca->nominal_rate == 1000000 && ca->round_peak_rate == 0);
+}
+
 static void invalid_and_congested_samples(void)
 {
 	struct sock sk = fresh();
@@ -603,6 +628,7 @@ int main(void)
 	recovery_reentry_and_suppression();
 	raw_srtt_boundaries();
 	retransmitted_samples_are_not_model_evidence();
+	mss_change_quarantines_rate_samples();
 	two_congestion_cycles_ack_sequence();
 	invalid_and_congested_samples();
 	app_limited_and_cwr_events();

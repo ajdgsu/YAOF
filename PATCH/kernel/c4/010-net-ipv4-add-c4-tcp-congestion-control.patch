@@ -163,6 +163,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_STATE_UNDO_VALID	0x10
 +#define C4_STATE_RTT_DELAYED_BASE	0x20
 +#define C4_STATE_CONGESTION	0x40
++#define C4_STATE_MSS_QUARANTINE	0x80
++#define C4_UNDO_CONGESTION	0x8000
 +
 +enum c4_mode {
 +	C4_INITIAL,
@@ -188,7 +190,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	u64 undo_initial_last_time;
 +	u32 backlog_q10;
 +	u32 undo_backlog_q10;
-+	u32 undo_congestion;
++	u32 mss_cache;
 +	u32 undo_max_rtt_us;
 +	u64 nominal_rate;		/* bytes per second */
 +	u64 prior_rate;
@@ -440,7 +442,9 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	ca->undo_previous_rate = ca->previous_rate;
 +	ca->undo_initial_last_time = ca->initial_last_time;
 +	ca->undo_backlog_q10 = ca->backlog_q10;
-+	ca->undo_congestion = ca->state_flags & C4_STATE_CONGESTION;
++	ca->undo_mode = ca->mode;
++	if (ca->state_flags & C4_STATE_CONGESTION)
++		ca->undo_mode |= C4_UNDO_CONGESTION;
 +	ca->undo_max_rtt_us = ca->max_rtt_us;
 +	ca->undo_nominal_rate = ca->nominal_rate;
 +	ca->undo_prior_rate = ca->prior_rate;
@@ -469,14 +473,15 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	ca->backlog_q10 = ca->undo_backlog_q10;
 +	ca->max_rtt_us = ca->undo_max_rtt_us;
 +	ca->state_flags = (ca->state_flags & ~C4_STATE_CONGESTION) |
-+			  ca->undo_congestion;
++			  ((ca->undo_mode & C4_UNDO_CONGESTION) ?
++			   C4_STATE_CONGESTION : 0);
 +	ca->nominal_rate = ca->undo_nominal_rate;
 +	ca->prior_rate = ca->undo_prior_rate;
 +	ca->loss_ewma_q16 = ca->undo_loss_ewma_q16;
 +	ca->ecn_alpha_q10 = ca->undo_ecn_alpha_q10;
 +	ca->startup_credit_q9 = ca->undo_startup_credit_q9;
 +	ca->gain_q10 = ca->undo_gain_q10;
-+	ca->mode = ca->undo_mode;
++	ca->mode = ca->undo_mode & ~C4_UNDO_CONGESTION;
 +	ca->cruise_rounds = ca->undo_cruise_rounds;
 +	ca->rounds_without_growth = ca->undo_rounds_without_growth;
 +	ca->probe_succeeded = ca->undo_probe_succeeded;
@@ -754,6 +759,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	memset(ca, 0, sizeof(*ca));
 +	c4_rebase_stats(sk);
 +	ca->initial_cwnd = tcp_snd_cwnd(tp);
++	ca->mss_cache = max(tp->mss_cache, 1U);
 +	ca->mode = recovering ? C4_RECOVERY : C4_INITIAL;
 +	ca->gain_q10 = recovering ? C4_GAIN_RECOVERY : C4_GAIN_INITIAL;
 +	c4_set_nominal_rate(ca, 0);
@@ -918,6 +924,19 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	}
 +	if (inet_csk(sk)->icsk_ca_state == TCP_CA_Loss)
 +		return;
++	if (tp->mss_cache != ca->mss_cache) {
++		ca->mss_cache = max(tp->mss_cache, 1U);
++		ca->state_flags |= C4_STATE_MSS_QUARANTINE;
++		ca->state_flags &= ~C4_STATE_UNDO_VALID;
++		c4_reset_era(sk);
++	}
++	if (ca->state_flags & C4_STATE_MSS_QUARANTINE) {
++		if (tcp_packets_in_flight(tp))
++			return;
++		ca->state_flags &= ~C4_STATE_MSS_QUARANTINE;
++		c4_reset_era(sk);
++		return;
++	}
 +	if (rs->prior_in_flight && !tcp_packets_in_flight(tp))
 +		tp->tcp_wstamp_ns = tcp_clock_ns();
 +
