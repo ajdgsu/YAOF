@@ -140,8 +140,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +/* Preserve the upstream numeric gain, not its approximate percentage comment. */
 +#define C4_GAIN_DRAIN		758U
 +#define C4_GAIN_CRUISE		1024U
-+#define C4_GAIN_PROBE		1088U
-+#define C4_GAIN_PUSH		1256U
++#define C4_GAIN_PROBE		1120U
++#define C4_GAIN_PUSH		1280U
 +#define C4_LOSS_BETA_Q10	256U
 +#define C4_ECN_MIN_BETA_Q10	64U
 +#ifdef MODULE
@@ -154,7 +154,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_MAX_RATE		(U64_MAX / USEC_PER_SEC)
 +#define C4_MAX_JITTER_US	250000U
 +#define C4_MAX_DELAY_US	25000U
-+#define C4_CRUISE_ROUNDS	2U
++#define C4_CRUISE_ROUNDS	1U
 +
 +#define C4_STATE_CWR_PENDING	0x01
 +#define C4_STATE_CWR_LOSS	0x02

@@ -47,6 +47,16 @@ The former Linux-only cruising-rate decay is replaced by recovery-cycle trimming
 
 Related upstream [8ba0dc627bcd28d30de2fc3c70f2a8f59268de32](https://github.com/private-octopus/picoquic/commit/8ba0dc627bcd28d30de2fc3c70f2a8f59268de32), 2026-10-22, corrects QUIC ACK-path attribution and loss-counter underflow. Linux `tcp_rate.c` snapshots delivery on the same TCP socket. Linux `tp->lost` is cumulative, unlike `lost_out`; spurious-loss correction does not subtract it in the inspected 6.12.112 `tcp_input.c`. Do not clamp legitimate unsigned counter wrap or copy QUIC multipath plumbing. Tests cover modular wrap.
 
+## First aggressive parameter tier
+
+The first aggressive tuning tier changes only the C4 probe, push, and cruise parameters:
+
+- `C4_GAIN_PROBE`: `1088/1024` to `1120/1024`
+- `C4_GAIN_PUSH`: `1256/1024` to `1280/1024`
+- `C4_CRUISE_ROUNDS`: `2` to `1`
+
+This tier does not change loss or ECN backoff, drain behavior, re-entry guards, or BDP margin. The corresponding expectations in `tools/testing/c4_test.c` must remain aligned with the persisted patch payload.
+
 ## Validation and rebuilding
 
 Run `python3 tools/test_c4.py`. It extracts the actual patch payload and exercises both built-in and module branches with undefined-behavior sanitizer. This is a userspace shim, not a full TCP stack or runtime acceptance test.

@@ -163,11 +163,13 @@ static void reentry_current_ack_rate(void)
 					rates[i], recovery, ca->mode, (unsigned long long)ca->nominal_rate);
 			if (rates[i] < 1000000) {
 				assert(ca->mode == C4_INITIAL && ca->gain_q10 == 2048);
-			} else {
+			} else if (recovery) {
 				assert(ca->mode == C4_CRUISING && ca->gain_q10 == 1024);
-				assert(ca->recent_rate == (recovery ? 0 : 80000));
-				if (recovery)
-					assert(ca->previous_rate == 80000);
+				assert(ca->recent_rate == 0);
+				assert(ca->previous_rate == 80000);
+			} else {
+				assert(ca->mode == C4_PROBING && ca->gain_q10 == 1120);
+				assert(ca->recent_rate == 80000);
 			}
 			assert(ca->nominal_rate == rates[i]);
 			assert(ca->round_peak_rate == rates[i]);
@@ -204,7 +206,7 @@ static void reentry_current_ack_rate(void)
 	ca->initial_last_time = sk.tp.tcp_mstamp - 1000001;
 	sk.tp.delivered = 200;
 	c4_cong_control(&sk, 0, 0, &rs);
-	assert(ca->mode == C4_CRUISING && ca->gain_q10 == 1024);
+	assert(ca->mode == C4_PROBING && ca->gain_q10 == 1120);
 	assert(ca->nominal_rate == 10000000 && ca->round_peak_rate == 10000000);
 	assert(ca->recent_rate == 100000); /* No early attribution to the old cycle. */
 }
@@ -277,54 +279,53 @@ static void two_congestion_cycles_ack_sequence(void)
 	ca->min_rtt_us = ca->max_rtt_us = 10000;
 	c4_enter(&sk, C4_CRUISING);
 	congestion_cycle_ack(&sk, 108, 100, 8, 10000, 10000);
-	assert(ca->mode == C4_CRUISING && ca->cruise_rounds == 2);
+	assert(ca->mode == C4_CRUISING && ca->cruise_rounds == 1);
 	assert(ca->round_peak_rate == 800000 && ca->recent_rate == 0);
 	assert(ca->next_round_delivered == 108);
+	/* One cruise round now advances to probing. */
 	congestion_cycle_ack(&sk, 116, 108, 8, 10000, 10000);
-	assert(ca->mode == C4_CRUISING && ca->cruise_rounds == 1);
+	assert(ca->mode == C4_PROBING && ca->gain_q10 == 1120);
 	assert(ca->recent_rate == 800000 && ca->next_round_delivered == 116);
+	/* The following round evaluates the probe and enters recovery. */
 	congestion_cycle_ack(&sk, 124, 116, 8, 10000, 10000);
-	assert(ca->mode == C4_PROBING && ca->gain_q10 == 1088);
+	assert(ca->mode == C4_RECOVERY && ca->gain_q10 == 960);
 	assert(ca->round_peak_rate == 800000 && ca->next_round_delivered == 124);
-	/* Prior delivery precedes round boundary: delay congestion within probing. */
 	congestion_cycle_ack(&sk, 125, 101, 24, 30000, 30000);
 	assert(ca->mode == C4_RECOVERY && ca->gain_q10 == 960);
-	assert(ca->nominal_rate == 1000000 && ca->recent_congestions == 0);
-	assert(ca->recent_rate == 800000 && ca->round_peak_rate == 0);
-	assert(ca->next_round_delivered == 125);
-	assert(ca->state_flags & C4_STATE_CONGESTION);
+	assert(ca->nominal_rate == 1000000 && ca->recent_rate == 800000);
+	assert(ca->round_peak_rate == 800000 && ca->next_round_delivered == 124);
 	congestion_cycle_ack(&sk, 126, 119, 7, 10000, 10000);
-	assert(ca->mode == C4_RECOVERY && ca->round_peak_rate == 700000);
+	assert(ca->mode == C4_RECOVERY && ca->round_peak_rate == 800000);
 	assert(ca->recent_rate == 800000 && ca->recent_congestions == 0);
 	congestion_cycle_ack(&sk, 130, 126, 4, 10000, 10000);
 	assert(ca->mode == C4_CRUISING && ca->gain_q10 == 1024);
-	assert(ca->nominal_rate == 1000000 && ca->recent_congestions == 1);
+	assert(ca->nominal_rate == 800000 && ca->recent_congestions == 0);
 	assert(ca->previous_rate == 800000 && ca->recent_rate == 0);
 	assert(ca->round_peak_rate == 400000 && ca->next_round_delivered == 130);
 	assert(!(ca->state_flags & C4_STATE_CONGESTION));
 	assert(ca->loss_ewma_q16 == 0 && ca->ecn_alpha_q10 == 0);
 	congestion_cycle_ack(&sk, 135, 130, 5, 10000, 10000);
-	assert(ca->mode == C4_CRUISING && ca->cruise_rounds == 1);
+	assert(ca->mode == C4_PROBING && ca->gain_q10 == 1120);
 	assert(ca->recent_rate == 400000 && ca->round_peak_rate == 500000);
 	congestion_cycle_ack(&sk, 140, 135, 5, 10000, 10000);
-	assert(ca->mode == C4_PROBING && ca->recent_rate == 500000);
-	assert(ca->round_peak_rate == 500000 && ca->recent_congestions == 1);
+	assert(ca->mode == C4_RECOVERY && ca->gain_q10 == 960);
+	assert(ca->round_peak_rate == 500000 && ca->recent_congestions == 0);
 	congestion_cycle_ack(&sk, 141, 126, 15, 30000, 30000);
 	assert(ca->mode == C4_RECOVERY && ca->gain_q10 == 960);
-	assert(ca->nominal_rate == 1000000 && ca->recent_congestions == 1);
-	assert(ca->recent_rate == 500000 && ca->round_peak_rate == 0);
-	assert(ca->next_round_delivered == 141);
+	assert(ca->nominal_rate == 800000 && ca->recent_congestions == 0);
+	assert(ca->recent_rate == 500000 && ca->round_peak_rate == 500000);
+	assert(ca->next_round_delivered == 140);
 	congestion_cycle_ack(&sk, 142, 138, 4, 10000, 10000);
-	assert(ca->mode == C4_RECOVERY && ca->round_peak_rate == 400000);
-	assert(ca->recent_rate == 500000 && ca->recent_congestions == 1);
+	assert(ca->mode == C4_RECOVERY && ca->round_peak_rate == 500000);
+	assert(ca->recent_rate == 500000 && ca->recent_congestions == 0);
 	congestion_cycle_ack(&sk, 145, 142, 3, 10000, 10000);
 	assert(ca->mode == C4_CRUISING && ca->gain_q10 == 1024);
-	assert(ca->nominal_rate == 500000 && ca->recent_congestions == 0);
+	assert(ca->nominal_rate == 800000 && ca->recent_congestions == 0);
 	assert(ca->previous_rate == 500000 && ca->recent_rate == 0);
 	assert(ca->round_peak_rate == 300000 && ca->next_round_delivered == 145);
 	assert(!(ca->state_flags & C4_STATE_CONGESTION));
 	assert(ca->loss_ewma_q16 == 0 && ca->ecn_alpha_q10 == 0);
-	assert(sk.sk_pacing_rate == 500000 && sk.tp.snd_cwnd == 7);
+	assert(sk.sk_pacing_rate == 800000 && sk.tp.snd_cwnd == 10);
 }
 
 static void raw_srtt_boundaries(void)
@@ -489,7 +490,7 @@ static void invalid_and_congested_samples(void)
 	ca->loss_ewma_q16 = 100;
 	ca->ecn_alpha_q10 = 50;
 	c4_cong_control(&sk, 0, 0, &rs);
-	assert(ca->cruise_rounds == 2);
+	assert(ca->cruise_rounds == 1);
 	assert(ca->loss_ewma_q16 == 100 && ca->ecn_alpha_q10 == 50);
 	c4_notify_congestion(&sk, C4_CONGESTION_DELAY, 1000, C4_Q10, false);
 	u64 reduced = ca->nominal_rate;
@@ -515,7 +516,7 @@ static void app_limited_and_cwr_events(void)
 	c4_cong_control(&sk, 0, 0, &rs);
 	c4_cong_control(&sk, 0, 0, &rs);
 	assert(ca->nominal_rate == 1000000 && ca->round_peak_rate == 0);
-	assert(ca->cruise_rounds == 2);
+	assert(ca->cruise_rounds == 1);
 	/* A negotiated ECN CWR is classified separately from transient TLP loss. */
 	c4_set_state(&sk, TCP_CA_CWR);
 	sk.icsk.icsk_ca_state = TCP_CA_CWR;
@@ -607,7 +608,7 @@ static void startup_undo_and_boundaries(void)
 	/* A nonzero backlog does not prevent recovery exit in upstream C4. */
 	ca->backlog_q10 = 1000;
 	c4_finish_round(&sk, 0);
-	assert(ca->mode == C4_CRUISING && ca->backlog_q10 == 936);
+	assert(ca->mode == C4_CRUISING && ca->gain_q10 == 1024 && ca->backlog_q10 == 936);
 }
 
 static void retained_linux_contracts(void)
