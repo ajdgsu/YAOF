@@ -340,7 +340,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +{
 +	u64 rate;
 +
-+	if (rs->delivered <= 0 || rs->interval_us <= 0)
++	if (rs->is_retrans || rs->delivered <= 0 || rs->interval_us <= 0)
 +		return 0;
 +
 +	rate = min_t(u64, (u64)rs->delivered * max(tp->mss_cache, 1U),
@@ -352,7 +352,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +static bool c4_rtt_sample_usable(const struct c4 *ca,
 +				 const struct rate_sample *rs)
 +{
-+	if (rs->rtt_us <= 0)
++	if (rs->is_retrans || rs->rtt_us <= 0)
 +		return false;
 +	if (!rs->is_ack_delayed && ca->mode == C4_RECOVERY &&
 +	    (ca->state_flags & C4_STATE_RTT_DELAYED_BASE))
@@ -924,7 +924,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	if (!rs->is_app_limited)
 +		sample_rate = c4_sample_rate(tp, rs);
 +	/* Invalid delivery samples cannot complete a model round. */
-+	round_start = rs->delivered > 0 && rs->interval_us > 0 &&
++	round_start = !rs->is_retrans && rs->delivered > 0 &&
++		      rs->interval_us > 0 &&
 +		      !before(rs->prior_delivered, ca->next_round_delivered);
 +	if (round_start || c4_rtt_sample_usable(ca, rs) ||
 +	    sample_rate > ca->round_peak_rate)
@@ -949,7 +950,8 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +		}
 +	}
 +
-+	if (ca->mode == C4_INITIAL && rs->acked_sacked &&
++	if (ca->mode == C4_INITIAL && !rs->is_retrans &&
++	    rs->delivered > 0 && rs->interval_us > 0 && rs->acked_sacked &&
 +	    tcp_is_cwnd_limited(sk)) {
 +		u32 old_cwnd = tcp_snd_cwnd(tp);
 +		u32 old_floor = ca->initial_cwnd;

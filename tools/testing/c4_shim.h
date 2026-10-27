@@ -15,7 +15,7 @@ typedef uint64_t u64;
 #define U32_MAX UINT32_MAX
 #define U64_MAX UINT64_MAX
 #define USEC_PER_SEC 1000000U
-#define ICSK_CA_PRIV_SIZE 256
+#define ICSK_CA_PRIV_SIZE 208
 #define __read_mostly
 #define __init
 #define __exit
@@ -63,7 +63,7 @@ struct rate_sample {
 	long interval_us, rtt_us;
 	u32 prior_delivered, prior_in_flight, acked_sacked;
 	int losses;
-	bool is_ack_delayed, is_app_limited;
+	bool is_ack_delayed, is_app_limited, is_retrans;
 };
 struct tcp_congestion_ops {
 	int flags;

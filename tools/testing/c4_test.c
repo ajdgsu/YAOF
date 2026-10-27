@@ -352,6 +352,53 @@ static void raw_srtt_boundaries(void)
 	}
 }
 
+static void retransmitted_samples_are_not_model_evidence(void)
+{
+	const bool recovery_events[] = { false, true };
+
+	for (unsigned int i = 0; i < sizeof(recovery_events) / sizeof(recovery_events[0]); i++) {
+		struct sock sk = fresh();
+		struct c4 *ca = c4_ca(&sk);
+		struct rate_sample rs = {
+			.delivered = 10, .interval_us = 10000, .rtt_us = 30000,
+			.prior_delivered = UINT32_MAX, .acked_sacked = 10,
+			.losses = recovery_events[i] ? 2 : 0, .is_retrans = true,
+		};
+
+		ca->nominal_rate = 100000;
+		ca->min_rtt_us = 20000;
+		ca->max_rtt_us = 30000;
+		ca->round_peak_rate = 90000;
+		ca->next_round_delivered = 100;
+		sk.tp.delivered = 110;
+		c4_enter(&sk, C4_INITIAL);
+		ca->round_peak_rate = 90000;
+		ca->min_rtt_us = 20000;
+		ca->max_rtt_us = 30000;
+		ca->next_round_delivered = 100;
+		ca->initial_cwnd = sk.tp.snd_cwnd;
+		c4_cong_control(&sk, 0, 0, &rs);
+		assert(ca->nominal_rate == 100000);
+		assert(ca->round_peak_rate == 90000);
+		assert(ca->min_rtt_us == 20000 && ca->max_rtt_us == 30000);
+		assert(ca->next_round_delivered == 100);
+		assert(ca->mode == C4_INITIAL && ca->initial_cwnd == sk.tp.snd_cwnd);
+	}
+
+	/* ACK compression remains valid evidence when the sample is not retransmitted. */
+	struct sock compressed = fresh();
+	struct c4 *state = c4_ca(&compressed);
+	struct rate_sample rs = { .delivered = 20, .interval_us = 1000,
+		.rtt_us = 1000, .prior_delivered = UINT32_MAX };
+
+	state->nominal_rate = 100000;
+	state->max_rtt_us = 10000;
+	compressed.tp.delivered = 20;
+	c4_cong_control(&compressed, 0, 0, &rs);
+	assert(state->round_peak_rate == 20000000);
+	assert(state->nominal_rate == 20000000);
+}
+
 static void invalid_and_congested_samples(void)
 {
 	struct sock sk = fresh();
@@ -555,6 +602,7 @@ int main(void)
 	reentry_current_ack_rate();
 	recovery_reentry_and_suppression();
 	raw_srtt_boundaries();
+	retransmitted_samples_are_not_model_evidence();
 	two_congestion_cycles_ack_sequence();
 	invalid_and_congested_samples();
 	app_limited_and_cwr_events();
