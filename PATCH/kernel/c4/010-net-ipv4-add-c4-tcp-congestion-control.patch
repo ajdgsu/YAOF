@@ -92,7 +92,7 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
  
 --- /dev/null
 +++ b/net/ipv4/tcp_c4.c
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,979 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR ISC
 +/*
 + * TCP C4 congestion control, native Linux v0 port.
@@ -164,7 +164,14 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +#define C4_STATE_RTT_DELAYED_BASE	0x20
 +#define C4_STATE_CONGESTION	0x40
 +#define C4_STATE_MSS_QUARANTINE	0x80
++
++#define C4_UNDO_RTT_DELAYED	0x4000
 +#define C4_UNDO_CONGESTION	0x8000
++#define C4_UNDO_STARTUP_MASK	0x000001ffU
++#define C4_UNDO_CRUISE_SHIFT	9
++#define C4_UNDO_ROUNDS_SHIFT	11
++#define C4_UNDO_PROBE_SHIFT	13
++#define C4_UNDO_CONGESTIONS_SHIFT	14
 +
 +enum c4_mode {
 +	C4_INITIAL,
@@ -212,18 +219,19 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	u32 undo_ecn_alpha_q10;
 +	u16 undo_gain_q10;
 +	u16 undo_mode;
-+	u32 undo_startup_credit_q9;
-+	u32 undo_cruise_rounds;
-+	u32 undo_rounds_without_growth;
-+	u32 undo_probe_succeeded;
-+	u32 undo_recent_congestions;
++	u64 undo_round_peak_rate;
++	u32 undo_next_round_delivered;
++	u32 undo_min_rtt_us;
++	u32 undo_era_min_rtt_us;
++	u32 undo_era_max_rtt_us;
++	u32 undo_phase;
 +	u16 gain_q10;
 +	u16 mode;
-+	u32 startup_credit_q9;
-+	u32 cruise_rounds;
-+	u32 rounds_without_growth;
-+	u32 probe_succeeded;
-+	u32 recent_congestions;
++	u16 startup_credit_q9;
++	u8 cruise_rounds;
++	u8 rounds_without_growth;
++	u8 probe_succeeded;
++	u8 recent_congestions;
 +	u32 state_flags;
 +};
 +
@@ -442,21 +450,27 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	ca->undo_previous_rate = ca->previous_rate;
 +	ca->undo_initial_last_time = ca->initial_last_time;
 +	ca->undo_backlog_q10 = ca->backlog_q10;
-+	ca->undo_mode = ca->mode;
-+	if (ca->state_flags & C4_STATE_CONGESTION)
-+		ca->undo_mode |= C4_UNDO_CONGESTION;
 +	ca->undo_max_rtt_us = ca->max_rtt_us;
 +	ca->undo_nominal_rate = ca->nominal_rate;
 +	ca->undo_prior_rate = ca->prior_rate;
 +	ca->undo_loss_ewma_q16 = ca->loss_ewma_q16;
 +	ca->undo_ecn_alpha_q10 = ca->ecn_alpha_q10;
-+	ca->undo_startup_credit_q9 = ca->startup_credit_q9;
-+	ca->undo_gain_q10 = ca->gain_q10;
 +	ca->undo_mode = ca->mode;
-+	ca->undo_cruise_rounds = ca->cruise_rounds;
-+	ca->undo_rounds_without_growth = ca->rounds_without_growth;
-+	ca->undo_probe_succeeded = ca->probe_succeeded;
-+	ca->undo_recent_congestions = ca->recent_congestions;
++	if (ca->state_flags & C4_STATE_CONGESTION)
++		ca->undo_mode |= C4_UNDO_CONGESTION;
++	if (ca->state_flags & C4_STATE_RTT_DELAYED_BASE)
++		ca->undo_mode |= C4_UNDO_RTT_DELAYED;
++	ca->undo_round_peak_rate = ca->round_peak_rate;
++	ca->undo_next_round_delivered = ca->next_round_delivered;
++	ca->undo_min_rtt_us = ca->min_rtt_us;
++	ca->undo_era_min_rtt_us = ca->era_min_rtt_us;
++	ca->undo_era_max_rtt_us = ca->era_max_rtt_us;
++	ca->undo_gain_q10 = ca->gain_q10;
++	ca->undo_phase = ca->startup_credit_q9 & C4_UNDO_STARTUP_MASK;
++	ca->undo_phase |= min(ca->cruise_rounds, (u8)3) << C4_UNDO_CRUISE_SHIFT;
++	ca->undo_phase |= min(ca->rounds_without_growth, (u8)3) << C4_UNDO_ROUNDS_SHIFT;
++	ca->undo_phase |= min(ca->probe_succeeded, (u8)1) << C4_UNDO_PROBE_SHIFT;
++	ca->undo_phase |= min(ca->recent_congestions, (u8)3) << C4_UNDO_CONGESTIONS_SHIFT;
 +	ca->state_flags |= C4_STATE_UNDO_VALID;
 +}
 +
@@ -472,23 +486,30 @@ Signed-off-by: YAOF Patchstack <patchstack@local>
 +	ca->initial_last_time = ca->undo_initial_last_time;
 +	ca->backlog_q10 = ca->undo_backlog_q10;
 +	ca->max_rtt_us = ca->undo_max_rtt_us;
-+	ca->state_flags = (ca->state_flags & ~C4_STATE_CONGESTION) |
-+			  ((ca->undo_mode & C4_UNDO_CONGESTION) ?
-+			   C4_STATE_CONGESTION : 0);
 +	ca->nominal_rate = ca->undo_nominal_rate;
 +	ca->prior_rate = ca->undo_prior_rate;
 +	ca->loss_ewma_q16 = ca->undo_loss_ewma_q16;
 +	ca->ecn_alpha_q10 = ca->undo_ecn_alpha_q10;
-+	ca->startup_credit_q9 = ca->undo_startup_credit_q9;
++	ca->round_peak_rate = ca->undo_round_peak_rate;
++	ca->next_round_delivered = ca->undo_next_round_delivered;
++	ca->min_rtt_us = ca->undo_min_rtt_us;
++	ca->era_min_rtt_us = ca->undo_era_min_rtt_us;
++	ca->era_max_rtt_us = ca->undo_era_max_rtt_us;
++	ca->startup_credit_q9 = ca->undo_phase & C4_UNDO_STARTUP_MASK;
 +	ca->gain_q10 = ca->undo_gain_q10;
-+	ca->mode = ca->undo_mode & ~C4_UNDO_CONGESTION;
-+	ca->cruise_rounds = ca->undo_cruise_rounds;
-+	ca->rounds_without_growth = ca->undo_rounds_without_growth;
-+	ca->probe_succeeded = ca->undo_probe_succeeded;
-+	ca->recent_congestions = ca->undo_recent_congestions;
++	ca->mode = ca->undo_mode & ~(C4_UNDO_RTT_DELAYED | C4_UNDO_CONGESTION);
++	ca->state_flags = (ca->state_flags &
++			   ~(C4_STATE_CONGESTION | C4_STATE_RTT_DELAYED_BASE)) |
++			  ((ca->undo_mode & C4_UNDO_CONGESTION) ?
++			   C4_STATE_CONGESTION : 0) |
++			  ((ca->undo_mode & C4_UNDO_RTT_DELAYED) ?
++			   C4_STATE_RTT_DELAYED_BASE : 0);
++	ca->cruise_rounds = (ca->undo_phase >> C4_UNDO_CRUISE_SHIFT) & 3;
++	ca->rounds_without_growth = (ca->undo_phase >> C4_UNDO_ROUNDS_SHIFT) & 3;
++	ca->probe_succeeded = (ca->undo_phase >> C4_UNDO_PROBE_SHIFT) & 1;
++	ca->recent_congestions = (ca->undo_phase >> C4_UNDO_CONGESTIONS_SHIFT) & 3;
 +	ca->state_flags &= ~C4_STATE_UNDO_VALID;
 +	c4_rebase_stats(sk);
-+	c4_reset_era(sk);
 +	return true;
 +}
 +

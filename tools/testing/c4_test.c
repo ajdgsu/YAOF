@@ -424,6 +424,59 @@ static void mss_change_quarantines_rate_samples(void)
 	assert(ca->nominal_rate == 1000000 && ca->round_peak_rate == 0);
 }
 
+static void undo_restores_round_and_rtt_history(void)
+{
+	struct sock sk = fresh();
+	struct c4 *ca = c4_ca(&sk);
+
+	ca->mode = C4_PUSHING;
+	ca->gain_q10 = C4_GAIN_PUSH;
+	ca->nominal_rate = 1000000;
+	ca->prior_rate = 900000;
+	ca->recent_rate = 800000;
+	ca->previous_rate = 700000;
+	ca->round_peak_rate = 600000;
+	ca->next_round_delivered = 123;
+	ca->min_rtt_us = 8000;
+	ca->max_rtt_us = 12000;
+	ca->era_min_rtt_us = 9000;
+	ca->era_max_rtt_us = 11000;
+	ca->startup_credit_q9 = 37;
+	ca->cruise_rounds = 1;
+	ca->rounds_without_growth = 2;
+	ca->probe_succeeded = 1;
+	ca->recent_congestions = 2;
+	ca->loss_ewma_q16 = 321;
+	ca->ecn_alpha_q10 = 123;
+	ca->state_flags |= C4_STATE_CONGESTION | C4_STATE_RTT_DELAYED_BASE;
+	c4_notify_congestion(&sk, C4_CONGESTION_LOSS, 0, C4_Q10, true);
+
+	ca->round_peak_rate = 1;
+	ca->next_round_delivered = 999;
+	ca->min_rtt_us = 1;
+	ca->max_rtt_us = 2;
+	ca->era_min_rtt_us = 3;
+	ca->era_max_rtt_us = 4;
+	ca->startup_credit_q9 = 0;
+	ca->cruise_rounds = 0;
+	ca->rounds_without_growth = 0;
+	ca->probe_succeeded = 0;
+	ca->recent_congestions = 0;
+	ca->loss_ewma_q16 = 0;
+	ca->ecn_alpha_q10 = 0;
+	c4_undo_cwnd(&sk);
+	assert(ca->round_peak_rate == 600000);
+	assert(ca->next_round_delivered == 123);
+	assert(ca->min_rtt_us == 8000 && ca->max_rtt_us == 12000);
+	assert(ca->era_min_rtt_us == 9000 && ca->era_max_rtt_us == 11000);
+	assert(ca->startup_credit_q9 == 37 && ca->cruise_rounds == 1);
+	assert(ca->rounds_without_growth == 2 && ca->probe_succeeded == 1);
+	assert(ca->recent_congestions == 2);
+	assert(ca->loss_ewma_q16 == 321 && ca->ecn_alpha_q10 == 123);
+	assert(ca->state_flags & C4_STATE_CONGESTION);
+	assert(ca->state_flags & C4_STATE_RTT_DELAYED_BASE);
+}
+
 static void invalid_and_congested_samples(void)
 {
 	struct sock sk = fresh();
@@ -629,6 +682,7 @@ int main(void)
 	raw_srtt_boundaries();
 	retransmitted_samples_are_not_model_evidence();
 	mss_change_quarantines_rate_samples();
+	undo_restores_round_and_rtt_history();
 	two_congestion_cycles_ack_sequence();
 	invalid_and_congested_samples();
 	app_limited_and_cwr_events();
